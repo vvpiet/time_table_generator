@@ -140,8 +140,9 @@ Export utilities:
 
 ## Dependencies
 
-- **streamlit** (1.28.1): Web application framework
-- **pandas** (2.0.3): Data manipulation and CSV handling
+- **streamlit** (1.58.0): Web application framework
+- **pandas** (2.3.3): Data manipulation and CSV handling
+- **pillow** (12.2.0): Image handling and Python 3.14 wheel support
 - **python-docx** (0.8.11): Word document generation
 - **openpyxl** (3.1.2): Excel support (for Word generation)
 
