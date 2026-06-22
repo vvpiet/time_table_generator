@@ -10,6 +10,7 @@ import json
 import plotly.express as px
 from schedule_generator import ScheduleGenerator, Lecture
 from export_handler import TimetableExporter
+import os
 
 # Page configuration
 st.set_page_config(
@@ -49,6 +50,15 @@ if 'schedule_generated' not in st.session_state:
     st.session_state.schedule_generated = False
 if 'batch_sizes' not in st.session_state:
     st.session_state.batch_sizes = {}  # Store batch size for each semester
+if 'saved_courses_file' not in st.session_state:
+    st.session_state.saved_courses_file = os.path.join(os.getcwd(), 'saved_courses.json')
+
+# If there is a saved courses file and no pending courses in session, load it automatically
+try:
+    if (not st.session_state.pending_courses) and os.path.exists(st.session_state.saved_courses_file):
+        load_courses_from_disk()
+except Exception:
+    pass
 
 # Helpers
 def create_generator(semester: str):
@@ -173,6 +183,42 @@ def apply_rotating_batch_assignment(rows: list, batch_size_map: dict) -> list:
     return rows
 
 
+def save_courses_to_disk(path: str = None):
+    path = path or st.session_state.saved_courses_file
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(st.session_state.pending_courses, f, ensure_ascii=False, indent=2)
+        return True, path
+    except Exception as e:
+        return False, str(e)
+
+
+def load_courses_from_disk(path: str = None):
+    path = path or st.session_state.saved_courses_file
+    if not os.path.exists(path):
+        return False, f"File not found: {path}"
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        # Validate and normalize loaded data
+        normalized = []
+        for item in data:
+            # minimal validation
+            if not item.get('code') or not item.get('name') or not item.get('instructor'):
+                continue
+            item.setdefault('type', 'Theory')
+            item.setdefault('semester', '1st')
+            item.setdefault('section', 'A')
+            item.setdefault('branch', '')
+            item.setdefault('duration', 1.0 if item.get('type') == 'Theory' else 1.5)
+            item.setdefault('batch', 'All')
+            normalized.append(item)
+        st.session_state.pending_courses = normalized
+        return True, path
+    except Exception as e:
+        return False, str(e)
+
+
 def _get_day_order(day: str) -> int:
     order = {'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5}
     return order.get(day, 99)
@@ -275,6 +321,80 @@ with tab1:
     else:
         st.subheader("📝 Enter Course Details")
         st.info("Add courses below and click 'Generate Schedule' to automatically assign times!")
+
+        # Upload / Save / Load facilities
+        st.markdown("**Upload course list (CSV / Excel)**")
+        uploaded_file = st.file_uploader("Upload CSV or Excel file with columns: Course Code, Course Name, Instructor, Type, Semester, Section, Branch, Duration (optional), Batch (optional)", type=['csv', 'xlsx'], key='upload_courses')
+        if uploaded_file is not None:
+            try:
+                if uploaded_file.name.lower().endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+
+                # Normalize column names
+                df_columns = {c.lower().strip(): c for c in df.columns}
+                def col_lookup(name):
+                    return df_columns.get(name.lower())
+
+                added = 0
+                for _, row in df.iterrows():
+                    code = row.get(col_lookup('course code')) or row.get(col_lookup('code'))
+                    name = row.get(col_lookup('course name')) or row.get(col_lookup('name'))
+                    instructor = row.get(col_lookup('instructor'))
+                    session_type = row.get(col_lookup('type')) or 'Theory'
+                    semester = row.get(col_lookup('semester')) or '1st'
+                    section = row.get(col_lookup('section')) or 'A'
+                    branch = row.get(col_lookup('branch')) or ''
+                    duration = row.get(col_lookup('duration')) if not pd.isna(row.get(col_lookup('duration'))) else (1.0 if str(session_type).lower().startswith('t') else 1.5)
+                    batch = row.get(col_lookup('batch')) or 'All'
+
+                    if not code or not name or not instructor:
+                        continue
+
+                    course_data = {
+                        'code': str(code).strip(),
+                        'name': str(name).strip(),
+                        'instructor': str(instructor).strip(),
+                        'type': str(session_type).strip(),
+                        'semester': str(semester).strip(),
+                        'section': str(section).strip(),
+                        'branch': str(branch).strip(),
+                        'duration': float(duration),
+                        'batch': str(batch).strip()
+                    }
+                    existing = [p for p in st.session_state.pending_courses if p['code'] == course_data['code']]
+                    if not existing:
+                        st.session_state.pending_courses.append(course_data)
+                        added += 1
+
+                if added:
+                    st.success(f"✅ Loaded {added} courses from upload.")
+                    # auto-save after upload
+                    save_courses_to_disk()
+                    st.experimental_rerun()
+                else:
+                    st.info("No valid course rows found in uploaded file or duplicates skipped.")
+            except Exception as e:
+                st.error(f"Failed to parse uploaded file: {e}")
+
+        # Save / Load buttons
+        col_save, col_load = st.columns(2)
+        with col_save:
+            if st.button("💾 Save Courses", key='save_courses_btn'):
+                ok, msg = save_courses_to_disk()
+                if ok:
+                    st.success(f"Saved courses to {msg}")
+                else:
+                    st.error(f"Failed to save courses: {msg}")
+        with col_load:
+            if st.button("📂 Load Saved Courses", key='load_courses_btn'):
+                ok, msg = load_courses_from_disk()
+                if ok:
+                    st.success(f"Loaded courses from {msg}")
+                    st.experimental_rerun()
+                else:
+                    st.error(f"Failed to load courses: {msg}")
         
         col1, col2, col3 = st.columns(3)
         
@@ -367,7 +487,12 @@ with tab1:
                             'batch': batch if batch else 'All'
                         }
                         st.session_state.pending_courses.append(course_data)
-                        st.success(f"✅ {course_code} added to queue!")
+                        # Auto-save after adding course
+                        ok, msg = save_courses_to_disk()
+                        if ok:
+                            st.success(f"✅ {course_code} added and saved to disk.")
+                        else:
+                            st.warning(f"{course_code} added but failed to save: {msg}")
                         st.rerun()
         
         # Display pending courses
@@ -429,7 +554,7 @@ with tab1:
                                 theory_courses.append(course_data)
                         
                         # Step 1: Schedule lab courses by choosing valid lab slots per semester
-                        for semester, lab_courses in lab_courses_by_semester.items():
+                        for sem_idx, (semester, lab_courses) in enumerate(lab_courses_by_semester.items()):
                             generator = get_generator_for_semester(semester)
                             if generator is None:
                                 for course in lab_courses:
@@ -446,11 +571,32 @@ with tab1:
                                     for day in ['Tuesday', 'Wednesday', 'Thursday', 'Friday']
                                 ):
                                     candidate_slots.append((slot_start, slot_end))
-                            
+                            # If no candidate slots found, all lab courses for this semester will likely fail
+                            if not candidate_slots:
+                                for course in lab_courses:
+                                    failed_courses.append(course['code'])
+                                continue
+
+                            # Rotate candidate slot order based on semester number/index to avoid same timing across semesters
+                            sem_digits = ''.join([c for c in str(semester) if c.isdigit()])
+                            try:
+                                sem_num = int(sem_digits) if sem_digits else sem_idx + 1
+                            except Exception:
+                                sem_num = sem_idx + 1
+
+                            offset = (sem_num - 1) % len(candidate_slots)
+                            ordered_slots = candidate_slots[offset:] + candidate_slots[:offset]
+
+                            used_slots = set()
+                            all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+
                             for lab_course in lab_courses:
                                 assigned = False
-                                for slot_start, slot_end in candidate_slots:
-                                    all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+                                # Try to pick an unused slot first
+                                for slot_start, slot_end in ordered_slots:
+                                    if (slot_start, slot_end) in used_slots:
+                                        continue
+
                                     slot_valid = all(
                                         (slot_start, slot_end) in generator.get_available_slots(day, duration, session_type='Lab')
                                         and not instructor_has_conflict(
@@ -465,6 +611,8 @@ with tab1:
                                     if not slot_valid:
                                         continue
 
+                                    # Assign this slot for the course across all days
+                                    successful_assign = True
                                     for day in all_days:
                                         lecture = Lecture(
                                             course_code=lab_course['code'],
@@ -477,7 +625,10 @@ with tab1:
                                             duration=lab_course['duration'],
                                             batch='All'
                                         )
-                                        generator.assign_lecture(lecture, day, slot_start, slot_end, allow_parallel_labs=True)
+                                        # Do not allow unlimited parallel labs within a semester by default
+                                        if not generator.assign_lecture(lecture, day, slot_start, slot_end, allow_parallel_labs=False):
+                                            successful_assign = False
+                                            break
                                         global_assignments.append({
                                             'Instructor': lecture.instructor,
                                             'Day': day,
@@ -485,8 +636,52 @@ with tab1:
                                             'End': datetime.strptime(slot_end, "%H:%M")
                                         })
                                         st.session_state.lectures.append(lecture)
-                                    assigned = True
-                                    break
+
+                                    if successful_assign:
+                                        assigned = True
+                                        used_slots.add((slot_start, slot_end))
+                                        break
+
+                                # If not assigned, allow reuse (parallel labs) as fallback but still check instructor conflict
+                                if not assigned:
+                                    for slot_start, slot_end in ordered_slots:
+                                        slot_valid = all(
+                                            (slot_start, slot_end) in generator.get_available_slots(day, duration, session_type='Lab')
+                                            and not instructor_has_conflict(
+                                                lab_course['instructor'],
+                                                day,
+                                                slot_start,
+                                                slot_end,
+                                                global_assignments
+                                            )
+                                            for day in all_days
+                                        )
+                                        if not slot_valid:
+                                            continue
+
+                                        for day in all_days:
+                                            lecture = Lecture(
+                                                course_code=lab_course['code'],
+                                                course_name=lab_course['name'],
+                                                instructor=lab_course['instructor'],
+                                                session_type=lab_course['type'],
+                                                sem=lab_course['semester'],
+                                                section=lab_course['section'],
+                                                branch=lab_course.get('branch', ''),
+                                                duration=lab_course['duration'],
+                                                batch='All'
+                                            )
+                                            generator.assign_lecture(lecture, day, slot_start, slot_end, allow_parallel_labs=True)
+                                            global_assignments.append({
+                                                'Instructor': lecture.instructor,
+                                                'Day': day,
+                                                'Start': datetime.strptime(slot_start, "%H:%M"),
+                                                'End': datetime.strptime(slot_end, "%H:%M")
+                                            })
+                                            st.session_state.lectures.append(lecture)
+                                        assigned = True
+                                        break
+
                                 if not assigned:
                                     failed_courses.append(lab_course['code'])
                         
