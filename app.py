@@ -219,6 +219,28 @@ def load_courses_from_disk(path: str = None):
         return False, str(e)
 
 
+def safe_rerun():
+    """Call Streamlit rerun safely across different Streamlit versions."""
+    try:
+        rerun = getattr(st, 'rerun', None)
+        if callable(rerun):
+            rerun()
+            return
+
+        exp_rerun = getattr(st, 'experimental_rerun', None)
+        if callable(exp_rerun):
+            exp_rerun()
+            return
+
+        stop = getattr(st, 'stop', None)
+        if callable(stop):
+            # Best-effort fallback: stop current script
+            stop()
+    except Exception:
+        # If rerun isn't available in this environment, silently continue
+        return
+
+
 def _get_day_order(day: str) -> int:
     order = {'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5}
     return order.get(day, 99)
@@ -372,7 +394,7 @@ with tab1:
                     st.success(f"✅ Loaded {added} courses from upload.")
                     # auto-save after upload
                     save_courses_to_disk()
-                    st.experimental_rerun()
+                    safe_rerun()
                 else:
                     st.info("No valid course rows found in uploaded file or duplicates skipped.")
             except Exception as e:
@@ -392,7 +414,7 @@ with tab1:
                 ok, msg = load_courses_from_disk()
                 if ok:
                     st.success(f"Loaded courses from {msg}")
-                    st.experimental_rerun()
+                    safe_rerun()
                 else:
                     st.error(f"Failed to load courses: {msg}")
         
