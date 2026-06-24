@@ -116,12 +116,15 @@ class ScheduleGenerator:
                 if self._is_in_recess(slot['start'], slot['end']):
                     continue
                 
-                if not self._has_overlap(day, slot['start'], slot['end'], allow_parallel_labs=allow_parallel_labs):
+                if not self._has_overlap(day, slot['start'], slot['end']):
                     available_slots.append((slot['start'].strftime("%H:%M"), slot['end'].strftime("%H:%M")))
             return available_slots
         
         # In flexible mode, scan the day for valid slots using configured morning_start and morning_end times
         current_time = self.morning_start
+        if session_type == 'Lab':
+            current_time = max(current_time, self.long_recess_end)
+
         while current_time <= self.morning_end:
             slot_end = current_time + timedelta(hours=duration)
             
@@ -133,17 +136,15 @@ class ScheduleGenerator:
             if self._is_in_recess(current_time, slot_end):
                 # Jump to after the recess period that conflicts with current slot
                 if current_time < self.long_recess_end and slot_end > self.long_recess_start:
-                    # Long recess overlap - jump to after it
                     current_time = self.long_recess_end
                 elif current_time < self.short_recess_end and slot_end > self.short_recess_start:
-                    # Short recess overlap - jump to after it
                     current_time = self.short_recess_end
                 else:
                     current_time += timedelta(minutes=30)
                 continue
             
             # Check if slot overlaps with any occupied slot
-            if not self._has_overlap(day, current_time, slot_end, allow_parallel_labs=allow_parallel_labs):
+            if not self._has_overlap(day, current_time, slot_end):
                 start_str = current_time.strftime("%H:%M")
                 end_str = slot_end.strftime("%H:%M")
                 available_slots.append((start_str, end_str))
@@ -161,13 +162,10 @@ class ScheduleGenerator:
             return True
         return False
     
-    def _has_overlap(self, day: str, start: datetime, end: datetime, allow_parallel_labs: bool = False) -> bool:
+    def _has_overlap(self, day: str, start: datetime, end: datetime, lecture: Lecture = None) -> bool:
         """Check if time slot overlaps with occupied slots"""
         for occupied in self.occupied_slots[day]:
             if occupied['start'] < end and occupied['end'] > start:
-                occupied_lecture = occupied.get('lecture')
-                if allow_parallel_labs and occupied_lecture and occupied_lecture.session_type == 'Lab':
-                    continue
                 return True
         return False
     
@@ -188,20 +186,8 @@ class ScheduleGenerator:
         start = datetime.strptime(start_time, "%H:%M")
         end = datetime.strptime(end_time, "%H:%M")
         
-        # For labs with allow_parallel_labs=True, only check instructor conflicts
-        # Different labs can run at same time in different spaces
-        if allow_parallel_labs and lecture.session_type == 'Lab':
-            for occupied in self.occupied_slots[day]:
-                if occupied['start'] < end and occupied['end'] > start:
-                    occupied_lecture = occupied.get('lecture')
-                    if occupied_lecture and occupied_lecture.session_type == 'Lab':
-                        if occupied_lecture.instructor == lecture.instructor:
-                            return False
-                        continue
-                    return False
-        else:
-            if self._has_overlap(day, start, end):
-                return False
+        if self._has_overlap(day, start, end):
+            return False
         
         self.occupied_slots[day].append({'start': start, 'end': end, 'lecture': lecture})
         lecture.assigned_slot = f"{start_time} - {end_time}"

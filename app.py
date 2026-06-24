@@ -72,6 +72,21 @@ def get_generator_for_semester(semester: str):
         return create_generator(semester)
     return st.session_state.schedule_generators[semester]
 
+
+def get_semester_number(semester: str) -> int:
+    digits = ''.join([c for c in semester if c.isdigit()])
+    return int(digits) if digits else 0
+
+
+def order_lab_slots_for_semester(semester: str, slots: list, semester_order: dict) -> list:
+    rank = semester_order.get(semester, 0)
+    ordered_slots = sorted(
+        list(enumerate(slots)),
+        key=lambda item: abs(item[0] - rank)
+    )
+    return [slot for _, slot in ordered_slots]
+
+
 def instructor_has_conflict(instructor: str, day: str, start: str, end: str, assignments: list) -> bool:
     start_dt = datetime.strptime(start, "%H:%M")
     end_dt = datetime.strptime(end, "%H:%M")
@@ -509,6 +524,12 @@ with tab1:
                         all_theory_courses = [c for c in st.session_state.pending_courses if c['type'] == 'Theory']
                         
                         # Schedule lab courses globally across all semesters with faculty conflict checking
+                        lab_semesters = sorted(
+                            {c['semester'] for c in all_lab_courses},
+                            key=get_semester_number
+                        )
+                        lab_semester_order = {sem: idx for idx, sem in enumerate(lab_semesters)}
+
                         for lab_course in all_lab_courses:
                             semester = lab_course['semester']
                             generator = get_generator_for_semester(semester)
@@ -520,15 +541,17 @@ with tab1:
                             instructor = lab_course['instructor']
                             assigned = False
                             
-                            # Find candidate slots for all days
-                            candidate_slots = []
+                            # Find candidate slots for all days after long recess
                             monday_slots = generator.get_available_slots('Monday', duration, session_type='Lab')
-                            for slot_start, slot_end in monday_slots:
+                            candidate_slots = [
+                                (slot_start, slot_end)
+                                for slot_start, slot_end in monday_slots
                                 if all(
                                     (slot_start, slot_end) in generator.get_available_slots(day, duration, session_type='Lab')
                                     for day in ['Tuesday', 'Wednesday', 'Thursday', 'Friday']
-                                ):
-                                    candidate_slots.append((slot_start, slot_end))
+                                )
+                            ]
+                            candidate_slots = order_lab_slots_for_semester(semester, candidate_slots, lab_semester_order)
                             
                             for slot_start, slot_end in candidate_slots:
                                 all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
@@ -543,7 +566,6 @@ with tab1:
                                     if day not in global_faculty_schedule[instructor]:
                                         global_faculty_schedule[instructor][day] = []
                                     
-                                    # Check against all existing assignments for this instructor
                                     for existing_start, existing_end in global_faculty_schedule[instructor][day]:
                                         if not (slot_end_dt <= existing_start or slot_start_dt >= existing_end):
                                             has_conflict = True
@@ -551,32 +573,46 @@ with tab1:
                                     if has_conflict:
                                         break
                                 
-                                if not has_conflict:
-                                    # Assign lab to all days for this semester
-                                    for day in all_days:
-                                        lecture = Lecture(
-                                            course_code=lab_course['code'],
-                                            course_name=lab_course['name'],
-                                            instructor=lab_course['instructor'],
-                                            session_type=lab_course['type'],
-                                            sem=lab_course['semester'],
-                                            section=lab_course['section'],
-                                            branch=lab_course.get('branch', ''),
-                                            duration=lab_course['duration'],
-                                            batch='All'
-                                        )
-                                        generator.assign_lecture(lecture, day, slot_start, slot_end, allow_parallel_labs=True)
-                                        
-                                        # Add to global faculty schedule
-                                        if instructor not in global_faculty_schedule:
-                                            global_faculty_schedule[instructor] = {}
-                                        if day not in global_faculty_schedule[instructor]:
-                                            global_faculty_schedule[instructor][day] = []
-                                        global_faculty_schedule[instructor][day].append((slot_start_dt, slot_end_dt))
-                                        
-                                        st.session_state.lectures.append(lecture)
-                                    assigned = True
-                                    break
+                                if has_conflict:
+                                    continue
+                                
+                                # Assign lab to all days for this semester
+                                assigned_lectures = []
+                                for day in all_days:
+                                    lecture = Lecture(
+                                        course_code=lab_course['code'],
+                                        course_name=lab_course['name'],
+                                        instructor=lab_course['instructor'],
+                                        session_type=lab_course['type'],
+                                        sem=lab_course['semester'],
+                                        section=lab_course['section'],
+                                        branch=lab_course.get('branch', ''),
+                                        duration=lab_course['duration'],
+                                        batch='All'
+                                    )
+                                    if not generator.assign_lecture(lecture, day, slot_start, slot_end):
+                                        for assigned_lecture in assigned_lectures:
+                                            generator.occupied_slots[assigned_lecture.day] = [
+                                                item for item in generator.occupied_slots[assigned_lecture.day]
+                                                if item.get('lecture') is not assigned_lecture
+                                            ]
+                                        assigned_lectures = []
+                                        break
+                                    assigned_lectures.append(lecture)
+                                
+                                if not assigned_lectures:
+                                    continue
+                                
+                                for day in all_days:
+                                    if instructor not in global_faculty_schedule:
+                                        global_faculty_schedule[instructor] = {}
+                                    if day not in global_faculty_schedule[instructor]:
+                                        global_faculty_schedule[instructor][day] = []
+                                    global_faculty_schedule[instructor][day].append((slot_start_dt, slot_end_dt))
+                                
+                                st.session_state.lectures.extend(assigned_lectures)
+                                assigned = True
+                                break
                             
                             if not assigned:
                                 failed_courses.append(lab_course['code'])
