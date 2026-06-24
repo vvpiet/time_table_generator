@@ -120,22 +120,26 @@ class ScheduleGenerator:
                     available_slots.append((slot['start'].strftime("%H:%M"), slot['end'].strftime("%H:%M")))
             return available_slots
         
-        # In flexible mode, scan the day for valid slots regardless of duration.
+        # In flexible mode, scan the day for valid slots using configured morning_start and morning_end times
         current_time = self.morning_start
-        while current_time < self.morning_end:
+        while current_time <= self.morning_end:
             slot_end = current_time + timedelta(hours=duration)
             
-            # Check if slot goes beyond morning end
+            # Ensure slot ends within morning_end
             if slot_end > self.morning_end:
                 break
             
-            # Check if slot falls within recess times
+            # Check if slot falls within any recess period
             if self._is_in_recess(current_time, slot_end):
-                # Jump to after recess
-                if current_time < self.long_recess_end:
+                # Jump to after the recess period that conflicts with current slot
+                if current_time < self.long_recess_end and slot_end > self.long_recess_start:
+                    # Long recess overlap - jump to after it
                     current_time = self.long_recess_end
-                elif current_time < self.short_recess_end:
+                elif current_time < self.short_recess_end and slot_end > self.short_recess_start:
+                    # Short recess overlap - jump to after it
                     current_time = self.short_recess_end
+                else:
+                    current_time += timedelta(minutes=30)
                 continue
             
             # Check if slot overlaps with any occupied slot
