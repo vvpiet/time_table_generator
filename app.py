@@ -273,8 +273,96 @@ with tab1:
     if st.session_state.schedule_config is None:
         st.warning("⚠️ Please initialize the schedule in the sidebar first!")
     else:
-        st.subheader("📝 Enter Course Details")
-        st.info("Add courses below and click 'Generate Schedule' to automatically assign times!")
+        # CSV Upload Section
+        st.subheader("📤 Import Courses from CSV")
+        st.info("📋 CSV Format: course_code, course_name, instructor, session_type (Theory/Lab), semester (1st-8th), section (A-D), branch, [batch_size for labs]")
+        
+        uploaded_file = st.file_uploader("Choose a CSV file", type="csv", key="csv_uploader")
+        if uploaded_file is not None:
+            try:
+                df = pd.read_csv(uploaded_file)
+                required_cols = ['course_code', 'course_name', 'instructor', 'session_type', 'semester', 'section', 'branch']
+                
+                if not all(col in df.columns for col in required_cols):
+                    st.error(f"❌ CSV must have columns: {', '.join(required_cols)}")
+                else:
+                    import_col1, import_col2 = st.columns([3, 1])
+                    with import_col2:
+                        if st.button("✅ Import CSV", use_container_width=True, key="import_csv_btn"):
+                            import_count = 0
+                            import_errors = []
+                            
+                            for idx, row in df.iterrows():
+                                try:
+                                    code = str(row['course_code']).strip()
+                                    name = str(row['course_name']).strip()
+                                    instr = str(row['instructor']).strip()
+                                    stype = str(row['session_type']).strip()
+                                    sem = str(row['semester']).strip()
+                                    sec = str(row['section']).strip()
+                                    brch = str(row['branch']).strip()
+                                    
+                                    # Validate session type
+                                    if stype not in ['Theory', 'Lab']:
+                                        import_errors.append(f"Row {idx+2}: Invalid session type '{stype}'")
+                                        continue
+                                    
+                                    # Set duration and batch
+                                    duration = 1.5 if stype == 'Lab' else 1.0
+                                    batch = 'All'
+                                    
+                                    # For lab courses, set batch size if provided
+                                    if stype == 'Lab':
+                                        if 'batch_size' in df.columns:
+                                            try:
+                                                batch_size = int(row['batch_size'])
+                                                st.session_state.batch_sizes[sem] = batch_size
+                                                batch = f"1-{batch_size}"
+                                            except:
+                                                pass
+                                        else:
+                                            # Use default batch size from semester config
+                                            batch_size = st.session_state.batch_sizes.get(sem, 3)
+                                            batch = f"1-{batch_size}"
+                                    
+                                    # Check for duplicates
+                                    existing = [p for p in st.session_state.pending_courses if p['code'] == code]
+                                    if existing:
+                                        import_errors.append(f"Row {idx+2}: Course {code} already exists")
+                                        continue
+                                    
+                                    course_data = {
+                                        'code': code,
+                                        'name': name,
+                                        'instructor': instr,
+                                        'type': stype,
+                                        'semester': sem,
+                                        'section': sec,
+                                        'branch': brch,
+                                        'duration': duration,
+                                        'batch': batch
+                                    }
+                                    st.session_state.pending_courses.append(course_data)
+                                    import_count += 1
+                                except Exception as e:
+                                    import_errors.append(f"Row {idx+2}: {str(e)}")
+                            
+                            if import_count > 0:
+                                st.success(f"✅ Imported {import_count} course(s)!")
+                            if import_errors:
+                                st.warning(f"⚠️ {len(import_errors)} row(s) skipped:\n" + "\n".join(import_errors[:5]))
+                            st.rerun()
+                    
+                    with import_col1:
+                        st.write(f"**Preview**: {len(df)} courses ready to import")
+                        st.dataframe(df.head(5), use_container_width=True)
+            except Exception as e:
+                st.error(f"❌ Error reading CSV: {str(e)}")
+        
+        st.markdown("---")
+        
+        st.subheader("📝 Enter Course Details Manually")
+        st.info("Or add courses one by one below!")
         
         col1, col2, col3 = st.columns(3)
         
