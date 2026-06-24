@@ -541,17 +541,44 @@ with tab1:
                             instructor = lab_course['instructor']
                             assigned = False
                             
-                            # Find candidate slots for all days after long recess
-                            monday_slots = generator.get_available_slots('Monday', duration, session_type='Lab')
-                            candidate_slots = [
-                                (slot_start, slot_end)
-                                for slot_start, slot_end in monday_slots
-                                if all(
-                                    (slot_start, slot_end) in generator.get_available_slots(day, duration, session_type='Lab')
-                                    for day in ['Tuesday', 'Wednesday', 'Thursday', 'Friday']
-                                )
-                            ]
-                            candidate_slots = order_lab_slots_for_semester(semester, candidate_slots, lab_semester_order)
+                            # Preferred fixed lab time blocks after long recess
+                            all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+                            fixed_lab_slots = [("14:00", "15:30"), ("15:30", "17:00")]
+
+                            # Filter fixed slots by generator availability on all days
+                            available_fixed = []
+                            for s, e in fixed_lab_slots:
+                                s_dt = datetime.strptime(s, "%H:%M")
+                                e_dt = datetime.strptime(e, "%H:%M")
+                                # Ensure within generator bounds and not in recess
+                                if e_dt > generator.morning_end:
+                                    continue
+                                if generator._is_in_recess(s_dt, e_dt):
+                                    continue
+
+                                ok_all_days = True
+                                for day in all_days:
+                                    day_slots = generator.get_available_slots(day, duration, session_type='Lab')
+                                    if (s, e) not in day_slots:
+                                        ok_all_days = False
+                                        break
+                                if ok_all_days:
+                                    available_fixed.append((s, e))
+
+                            if available_fixed:
+                                candidate_slots = order_lab_slots_for_semester(semester, available_fixed, lab_semester_order)
+                            else:
+                                # Fallback to scanning generator's available slots (if fixed blocks unavailable)
+                                monday_slots = generator.get_available_slots('Monday', duration, session_type='Lab')
+                                candidate_slots = [
+                                    (slot_start, slot_end)
+                                    for slot_start, slot_end in monday_slots
+                                    if all(
+                                        (slot_start, slot_end) in generator.get_available_slots(day, duration, session_type='Lab')
+                                        for day in all_days
+                                    )
+                                ]
+                                candidate_slots = order_lab_slots_for_semester(semester, candidate_slots, lab_semester_order)
                             
                             for slot_start, slot_end in candidate_slots:
                                 all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
