@@ -312,10 +312,16 @@ with tab1:
                                     code = str(row['course_code']).strip()
                                     name = str(row['course_name']).strip()
                                     instr = str(row['instructor']).strip()
-                                    stype = str(row['session_type']).strip()
+                                    stype = str(row['session_type']).strip().title()
                                     sem = str(row['semester']).strip()
                                     sec = str(row['section']).strip()
                                     brch = str(row['branch']).strip()
+                                    
+                                    # Normalize session type values
+                                    if stype.lower() == 'lab':
+                                        stype = 'Lab'
+                                    elif stype.lower() == 'theory':
+                                        stype = 'Theory'
                                     
                                     # Validate session type
                                     if stype not in ['Theory', 'Lab']:
@@ -645,7 +651,7 @@ with tab1:
                                 failed_courses.append(lab_course['code'])
                         
                         # Step 2: Schedule theory courses with global faculty conflict checking
-                        for course_data in all_theory_courses:
+                        for idx, course_data in enumerate(all_theory_courses):
                             semester = course_data['semester']
                             generator = get_generator_for_semester(semester)
                             if generator is None:
@@ -653,12 +659,21 @@ with tab1:
                                 continue
                             
                             instructor = course_data['instructor']
-                            assigned_days = []
+                            assigned = False
                             all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+                            day_order = all_days
                             
-                            for day in all_days:
+                            for day_offset in range(len(day_order)):
+                                day = day_order[(idx + day_offset) % len(day_order)]
                                 available_slots = generator.get_available_slots(day, course_data['duration'])
-                                for slot_start, slot_end in available_slots:
+                                if not available_slots:
+                                    continue
+                                
+                                # Rotate preferred slot per course/day to avoid same slot every day
+                                preferred_slot_index = (idx + day_order.index(day)) % len(available_slots)
+                                for slot_increment in range(len(available_slots)):
+                                    slot_idx = (preferred_slot_index + slot_increment) % len(available_slots)
+                                    slot_start, slot_end = available_slots[slot_idx]
                                     slot_start_dt = datetime.strptime(slot_start, "%H:%M")
                                     slot_end_dt = datetime.strptime(slot_end, "%H:%M")
                                     
@@ -693,10 +708,12 @@ with tab1:
                                         global_faculty_schedule[instructor][day].append((slot_start_dt, slot_end_dt))
                                         
                                         st.session_state.lectures.append(lecture)
-                                        assigned_days.append(day)
+                                        assigned = True
                                         break
+                                if assigned:
+                                    break
                             
-                            if not assigned_days:
+                            if not assigned:
                                 failed_courses.append(course_data['code'])
                         
                         # Build combined timetable across semester generators

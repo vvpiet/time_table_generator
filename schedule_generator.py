@@ -103,6 +103,23 @@ class ScheduleGenerator:
         available_slots = []
         allow_parallel_labs = session_type == 'Lab'
         
+        # For lab sessions, use fixed post-recess blocks regardless of layout
+        if session_type == 'Lab':
+            lab_slots = []
+            first_start = self.long_recess_end
+            first_end = first_start + timedelta(hours=1.5)
+            second_start = first_end
+            second_end = second_start + timedelta(hours=1.5)
+
+            for start, end in [(first_start, first_end), (second_start, second_end)]:
+                if end > self.morning_end:
+                    continue
+                if self._is_in_recess(start, end):
+                    continue
+                if not self._has_overlap(day, start, end, allow_parallel_labs=True):
+                    lab_slots.append((start.strftime("%H:%M"), end.strftime("%H:%M")))
+            return lab_slots
+
         if self.use_reference_periods and self.period_slots:
             for slot in self.period_slots:
                 slot_duration = slot['end'] - slot['start']
@@ -122,8 +139,6 @@ class ScheduleGenerator:
         
         # In flexible mode, scan the day for valid slots using configured morning_start and morning_end times
         current_time = self.morning_start
-        if session_type == 'Lab':
-            current_time = max(current_time, self.long_recess_end)
 
         while current_time <= self.morning_end:
             slot_end = current_time + timedelta(hours=duration)
@@ -144,7 +159,7 @@ class ScheduleGenerator:
                 continue
             
             # Check if slot overlaps with any occupied slot
-            if not self._has_overlap(day, current_time, slot_end):
+            if not self._has_overlap(day, current_time, slot_end, allow_parallel_labs=allow_parallel_labs):
                 start_str = current_time.strftime("%H:%M")
                 end_str = slot_end.strftime("%H:%M")
                 available_slots.append((start_str, end_str))
@@ -162,10 +177,17 @@ class ScheduleGenerator:
             return True
         return False
     
-    def _has_overlap(self, day: str, start: datetime, end: datetime, lecture: Lecture = None) -> bool:
+    def _has_overlap(self, day: str, start: datetime, end: datetime, lecture: Lecture = None, allow_parallel_labs: bool = False) -> bool:
         """Check if time slot overlaps with occupied slots"""
         for occupied in self.occupied_slots[day]:
             if occupied['start'] < end and occupied['end'] > start:
+                occupied_lecture = occupied.get('lecture')
+                if allow_parallel_labs and occupied_lecture and occupied_lecture.session_type == 'Lab':
+                    if lecture and lecture.session_type == 'Lab':
+                        if occupied_lecture.instructor == lecture.instructor:
+                            return True
+                        continue
+                    continue
                 return True
         return False
     
@@ -186,8 +208,18 @@ class ScheduleGenerator:
         start = datetime.strptime(start_time, "%H:%M")
         end = datetime.strptime(end_time, "%H:%M")
         
-        if self._has_overlap(day, start, end):
-            return False
+        if allow_parallel_labs and lecture.session_type == 'Lab':
+            for occupied in self.occupied_slots[day]:
+                if occupied['start'] < end and occupied['end'] > start:
+                    occupied_lecture = occupied.get('lecture')
+                    if occupied_lecture and occupied_lecture.session_type == 'Lab':
+                        if occupied_lecture.instructor == lecture.instructor:
+                            return False
+                        continue
+                    return False
+        else:
+            if self._has_overlap(day, start, end, lecture=lecture, allow_parallel_labs=allow_parallel_labs):
+                return False
         
         self.occupied_slots[day].append({'start': start, 'end': end, 'lecture': lecture})
         lecture.assigned_slot = f"{start_time} - {end_time}"
