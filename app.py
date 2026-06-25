@@ -303,6 +303,8 @@ with tab1:
                                         stype = 'Lab'
                                     elif stype.lower() == 'theory':
                                         stype = 'Theory'
+                                    elif stype.lower() == 'project':
+                                        stype = 'Lab'  # Treat projects like labs (batch-based)
                                     
                                     # Validate session type
                                     if stype not in ['Theory', 'Lab']:
@@ -645,32 +647,34 @@ with tab1:
                             
                             instructor = course_data['instructor']
                             all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-                            day_order = all_days
                             
                             # Determine number of sessions per week based on hours_per_week
                             hours_per_week = course_data.get('hours_per_week', 0)
                             num_sessions = max(1, int(round(hours_per_week))) if hours_per_week > 0 else 1
                             sessions_scheduled = 0
                             used_days = set()
+                            course_scheduled = False
                             
+                            # Try to schedule each session for this course
                             for session_num in range(num_sessions):
                                 assigned = False
-                                for day_offset in range(len(day_order)):
-                                    day = day_order[(idx + day_offset + session_num) % len(day_order)]
-                                    
-                                    # Skip days already used for this course
-                                    if day in used_days:
-                                        continue
+                                
+                                # Try each day, prioritizing days not yet used for this course
+                                for day_attempt in range(len(all_days)):
+                                    # First try unused days, then try used days
+                                    if day_attempt < len(all_days) - len(used_days):
+                                        # Prioritize unused days
+                                        day = [d for d in all_days if d not in used_days][(idx + day_attempt) % len([d for d in all_days if d not in used_days])]
+                                    else:
+                                        # Fallback to any day
+                                        day = all_days[(idx + day_attempt) % len(all_days)]
                                     
                                     available_slots = generator.get_available_slots(day, course_data['duration'])
                                     if not available_slots:
                                         continue
                                     
-                                    # Rotate preferred slot per course/day to avoid same slot every day
-                                    preferred_slot_index = (idx + day_order.index(day) + session_num) % len(available_slots)
-                                    for slot_increment in range(len(available_slots)):
-                                        slot_idx = (preferred_slot_index + slot_increment) % len(available_slots)
-                                        slot_start, slot_end = available_slots[slot_idx]
+                                    # Try each available slot
+                                    for slot_idx, (slot_start, slot_end) in enumerate(available_slots):
                                         slot_start_dt = datetime.strptime(slot_start, "%H:%M")
                                         slot_end_dt = datetime.strptime(slot_end, "%H:%M")
                                         
@@ -697,6 +701,7 @@ with tab1:
                                             batch='All',
                                             hours_per_week=course_data.get('hours_per_week', 0)
                                         )
+                                        
                                         if generator.assign_lecture(lecture, day, slot_start, slot_end):
                                             # Add to global faculty schedule
                                             if instructor not in global_faculty_schedule:
@@ -708,13 +713,16 @@ with tab1:
                                             st.session_state.lectures.append(lecture)
                                             used_days.add(day)
                                             sessions_scheduled += 1
+                                            course_scheduled = True
                                             assigned = True
                                             break
+                                    
                                     if assigned:
                                         break
                                 
+                                # If we couldn't schedule this session, but we scheduled at least one, continue
                                 if not assigned and session_num == 0:
-                                    # Only fail if we couldn't schedule the first session
+                                    # Only fail if first session couldn't be scheduled
                                     failed_courses.append(course_data['code'])
                                     break
                         

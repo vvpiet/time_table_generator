@@ -373,6 +373,104 @@ class TimetableExporter:
         return word_buffer.getvalue()
 
     @staticmethod
+    def export_to_word_matrix(timetable_df: pd.DataFrame, title: str = "College Timetable - Timetable Matrix") -> bytes:
+        """Export timetable as a matrix format (Time x Days) with course info in cells"""
+        doc = Document()
+        TimetableExporter._add_word_header(doc, timetable_df, "Time Table - Matrix View")
+
+        semesters = sorted([s for s in timetable_df['Semester'].dropna().unique()])
+        for sem_index, semester in enumerate(semesters):
+            sem_data = timetable_df[timetable_df['Semester'] == semester]
+            if sem_data.empty:
+                continue
+            if sem_index > 0:
+                doc.add_page_break()
+
+            sem_heading = doc.add_paragraph()
+            sem_run = sem_heading.add_run(f"Semester: {semester}")
+            sem_run.font.size = Pt(14)
+            sem_run.font.bold = True
+            sem_run.font.color.rgb = RGBColor(0, 0, 139)
+            sem_heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            branch_label = TimetableExporter._get_branch_label(sem_data)
+            branch_para = doc.add_paragraph()
+            branch_run = branch_para.add_run(f"Branch: {branch_label}")
+            branch_run.font.size = Pt(11)
+            branch_run.font.bold = True
+            branch_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            doc.add_paragraph()
+
+            # Get unique time slots sorted
+            time_slots = sorted(sem_data['Time'].dropna().unique(), key=lambda x: (
+                datetime.strptime(str(x).split('-')[0].strip(), '%H:%M') if '-' in str(x) else datetime.min
+            ))
+            
+            days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+            
+            # Create matrix: rows = time slots, columns = days
+            table = doc.add_table(rows=len(time_slots) + 1, cols=len(days) + 1)
+            table.style = 'Light Grid Accent 1'
+
+            # Header row - Day names
+            header_cells = table.rows[0].cells
+            header_cells[0].text = "Time"
+            for paragraph in header_cells[0].paragraphs:
+                for run in paragraph.runs:
+                    run.font.bold = True
+
+            for day_idx, day in enumerate(days):
+                header_cells[day_idx + 1].text = day
+                for paragraph in header_cells[day_idx + 1].paragraphs:
+                    for run in paragraph.runs:
+                        run.font.bold = True
+
+            # Shade header row
+            from docx.oxml import parse_xml
+            from docx.oxml.ns import nsdecls
+            shading_elm = parse_xml(r'<w:shd {} w:fill="D9D9D9"/>'.format(nsdecls('w')))
+            for cell in header_cells:
+                cell._element.get_or_add_tcPr().append(shading_elm)
+
+            # Fill in the matrix
+            for slot_idx, time_slot in enumerate(time_slots):
+                row_cells = table.rows[slot_idx + 1].cells
+                row_cells[0].text = str(time_slot)
+                for paragraph in row_cells[0].paragraphs:
+                    for run in paragraph.runs:
+                        run.font.bold = True
+
+                # Fill cells for each day
+                for day_idx, day in enumerate(days):
+                    courses_on_day = sem_data[(sem_data['Day'] == day) & (sem_data['Time'] == time_slot)]
+                    cell_text = ""
+                    for _, course_row in courses_on_day.iterrows():
+                        course_code = str(course_row.get('Course Code', ''))
+                        batch = str(course_row.get('Batch', 'All'))
+                        if batch and batch != 'All':
+                            cell_text += f"{course_code} ({batch})\n"
+                        else:
+                            cell_text += f"{course_code}\n"
+                    
+                    row_cells[day_idx + 1].text = cell_text.strip()
+
+            doc.add_paragraph()
+            TimetableExporter._append_class_coordinator_section(doc, sem_data, semester=semester)
+            sem_issues = TimetableExporter._find_timetable_overlaps(sem_data)
+            TimetableExporter._append_acknowledgement(doc, sem_issues)
+
+        if not semesters:
+            no_data_para = doc.add_paragraph()
+            no_data_run = no_data_para.add_run("No timetable data available to export.")
+            no_data_run.font.size = Pt(12)
+            no_data_run.font.bold = True
+            no_data_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        word_buffer = BytesIO()
+        doc.save(word_buffer)
+        word_buffer.seek(0)
+        return word_buffer.getvalue()
+
+    @staticmethod
     def export_day_wise(timetable_df: pd.DataFrame, 
                        title: str = "College Timetable - Day Wise") -> bytes:
         """Export timetable organized by days in Word format"""
