@@ -23,7 +23,7 @@ class TimeSlot:
 class Lecture:
     """Represents a lecture or lab session"""
     def __init__(self, course_code: str, course_name: str, instructor: str, 
-                 session_type: str, sem: str, section: str, branch: str = "", duration: float = 1.0, batch: str = "All"):
+                 session_type: str, sem: str, section: str, branch: str = "", duration: float = 1.0, batch: str = "All", hours_per_week: float = 0):
         self.course_code = course_code
         self.course_name = course_name
         self.instructor = instructor
@@ -33,6 +33,7 @@ class Lecture:
         self.branch = branch
         self.duration = duration  # in hours (1.0 for theory, 1.5 for lab)
         self.batch = batch
+        self.hours_per_week = hours_per_week  # Curriculum hours per week
         self.assigned_slot = None
         self.assigned_period = None
         self.day = None
@@ -236,7 +237,8 @@ class ScheduleGenerator:
             'Instructor': lecture.instructor,
             'Semester': lecture.sem,
             'Section': lecture.section,
-            'Batch': lecture.batch
+            'Batch': lecture.batch,
+            'Hours Per Week': lecture.hours_per_week
         })
         return True
     

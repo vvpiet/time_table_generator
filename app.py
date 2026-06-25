@@ -290,7 +290,7 @@ with tab1:
     else:
         # CSV Upload Section
         st.subheader("📤 Import Courses from CSV")
-        st.info("📋 CSV Format: course_code, course_name, instructor, session_type (Theory/Lab), semester (1st-8th), section (A-D), branch, [batch_size for labs]")
+        st.info("📋 CSV Format: course_code, course_name, instructor, session_type (Theory/Lab), semester (1st-8th), section (A-D), branch, [batch_size for labs], hours_per_week")
         
         uploaded_file = st.file_uploader("Choose a CSV file", type="csv", key="csv_uploader")
         if uploaded_file is not None:
@@ -316,6 +316,14 @@ with tab1:
                                     sem = str(row['semester']).strip()
                                     sec = str(row['section']).strip()
                                     brch = str(row['branch']).strip()
+                                    
+                                    # Extract hours_per_week if available
+                                    hours_per_week = 0
+                                    if 'hours_per_week' in df.columns:
+                                        try:
+                                            hours_per_week = float(row['hours_per_week'])
+                                        except:
+                                            hours_per_week = 0
                                     
                                     # Normalize session type values
                                     if stype.lower() == 'lab':
@@ -361,7 +369,8 @@ with tab1:
                                         'section': sec,
                                         'branch': brch,
                                         'duration': duration,
-                                        'batch': batch
+                                        'batch': batch,
+                                        'hours_per_week': hours_per_week
                                     }
                                     st.session_state.pending_courses.append(course_data)
                                     import_count += 1
@@ -390,6 +399,7 @@ with tab1:
         with col1:
             course_code = st.text_input("Course Code", placeholder="CS101", key="code_input")
             session_type = st.selectbox("Session Type", ["Theory", "Lab"], key="type_select")
+            hours_per_week = st.number_input("Hours per Week", min_value=0.5, max_value=8.0, value=2.0, step=0.5, key="hours_input")
         
         with col2:
             course_name = st.text_input("Course Name", placeholder="Data Structures", key="name_input")
@@ -473,7 +483,8 @@ with tab1:
                             'section': section,
                             'branch': branch,
                             'duration': duration,
-                            'batch': batch if batch else 'All'
+                            'batch': batch if batch else 'All',
+                            'hours_per_week': hours_per_week
                         }
                         st.session_state.pending_courses.append(course_data)
                         st.success(f"✅ {course_code} added to queue!")
@@ -484,11 +495,11 @@ with tab1:
             st.subheader("📋 Courses to Schedule")
             pending_df = pd.DataFrame(st.session_state.pending_courses)
             # Create a display DataFrame with formatted batch info
-            pending_df_display = pending_df[['code', 'name', 'instructor', 'type', 'semester', 'section', 'branch', 'batch']].copy()
+            pending_df_display = pending_df[['code', 'name', 'instructor', 'type', 'semester', 'section', 'branch', 'batch', 'hours_per_week']].copy()
             pending_df_display['batch'] = pending_df_display['batch'].apply(parse_batch_range)
-            pending_df_display = pending_df_display.rename(columns={'batch': 'batches'})
+            pending_df_display = pending_df_display.rename(columns={'batch': 'batches', 'code': 'Course Code', 'name': 'Course Name', 'instructor': 'Instructor', 'type': 'Type', 'semester': 'Semester', 'section': 'Section', 'branch': 'Branch', 'hours_per_week': 'Hours/Week'})
             st.dataframe(pending_df_display, use_container_width=True)
-            st.caption("💡 For labs: Batches are auto-assigned based on batch size configuration per semester")
+            st.caption("💡 For labs: Batches are auto-assigned based on batch size configuration per semester. Hours per week is tracked for reporting purposes.")
             
             # Remove course option
             col1, col2 = st.columns(2)
@@ -621,7 +632,8 @@ with tab1:
                                         section=lab_course['section'],
                                         branch=lab_course.get('branch', ''),
                                         duration=lab_course['duration'],
-                                        batch='All'
+                                        batch='All',
+                                        hours_per_week=lab_course.get('hours_per_week', 0)
                                     )
                                     if not generator.assign_lecture(lecture, day, slot_start, slot_end):
                                         for assigned_lecture in assigned_lectures:
@@ -697,7 +709,8 @@ with tab1:
                                         section=course_data['section'],
                                         branch=course_data.get('branch', ''),
                                         duration=course_data['duration'],
-                                        batch='All'
+                                        batch='All',
+                                        hours_per_week=course_data.get('hours_per_week', 0)
                                     )
                                     if generator.assign_lecture(lecture, day, slot_start, slot_end):
                                         # Add to global faculty schedule
