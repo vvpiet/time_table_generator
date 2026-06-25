@@ -228,7 +228,6 @@ class ScheduleGenerator:
         lecture.day = day
         self.timetable.append({
             'Day': day,
-            'Period': lecture.assigned_period if lecture.assigned_period else lecture.assigned_slot,
             'Time': lecture.assigned_slot,
             'Course Code': lecture.course_code,
             'Course Name': lecture.course_name,
