@@ -319,8 +319,9 @@ with tab1:
                                         import_errors.append(f"Row {idx+2}: Invalid session type '{stype}'")
                                         continue
                                     
-                                    # Set duration and batch
-                                    duration = 2.0 if stype == 'Lab' else 1.0
+                                    # Set duration to 1.0 for all courses (theory and lab)
+                                    # Duration represents hours per single session
+                                    duration = 1.0
                                     batch = 'All'
                                     
                                     # For lab courses, set batch size if provided
@@ -431,13 +432,13 @@ with tab1:
         if session_type == "Lab":
             st.success(f"✅ Lab batches for {semester}: {batch_labels} (auto-assigned)")
         
-        # Set duration based on session type
+        # Set duration to 1.0 for all courses (theory and lab)
+        # Duration represents hours per single session
+        duration = 1.0
         if session_type == "Theory":
-            duration = 1.0
-            st.info("📝 Theory lectures: 1 hour")
+            st.info("📝 Theory lectures: 1 hour per session")
         else:
-            duration = 2.0
-            st.info("🔬 Lab sessions: 2 hours")
+            st.info("🔬 Lab sessions: 1 hour per session")
         
         # Add course button
         col1, col2 = st.columns([3, 1])
@@ -548,7 +549,7 @@ with tab1:
                                     section=lab_course['section'],
                                     branch=lab_course.get('branch', ''),
                                     duration=lab_course['duration'],
-                                    batch='All',
+                                    batch=lab_course.get('batch', 'All'),
                                     hours_per_week=lab_course.get('hours_per_week', 0)
                                 )
                                 try:
@@ -569,7 +570,7 @@ with tab1:
                                         section=lab_course['section'],
                                         branch=lab_course.get('branch', ''),
                                         duration=lab_course['duration'],
-                                        batch='All',
+                                        batch=lab_course.get('batch', 'All'),
                                         hours_per_week=lab_course.get('hours_per_week', 0)
                                     )
                                     if generator.assign_lecture(lecture, day, slot_start, slot_end, allow_parallel_labs=True):
