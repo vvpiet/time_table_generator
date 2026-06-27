@@ -544,7 +544,11 @@ with tab1:
                                     batch='All',
                                     hours_per_week=lab_course.get('hours_per_week', 0)
                                 )
-                                available_slots = generator.get_available_slots(day, duration, session_type='Lab', lecture=lecture_template)
+                                try:
+                                    available_slots = generator.get_available_slots(day, duration, session_type='Lab', lecture=lecture_template)
+                                except TypeError:
+                                    available_slots = generator.get_available_slots(day, duration, session_type='Lab')
+
                                 if not available_slots:
                                     continue
 
