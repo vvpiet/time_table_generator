@@ -104,21 +104,30 @@ class ScheduleGenerator:
         available_slots = []
         allow_parallel_labs = session_type == 'Lab'
         
-        # For lab sessions, use fixed post-recess blocks regardless of layout
+        # For lab sessions, scan the afternoon period for available slots
         if session_type == 'Lab':
             lab_slots = []
-            first_start = self.long_recess_end
-            first_end = first_start + timedelta(hours=duration)
-            second_start = first_end
-            second_end = second_start + timedelta(hours=duration)
-
-            for start, end in [(first_start, first_end), (second_start, second_end)]:
-                if end > self.morning_end:
+            # Start scanning from long_recess_end
+            current_time = self.long_recess_end
+            
+            while current_time < self.morning_end:
+                slot_end = current_time + timedelta(hours=duration)
+                
+                # Ensure slot doesn't exceed morning_end
+                if slot_end > self.morning_end:
+                    break
+                
+                # Check if slot is in recess
+                if self._is_in_recess(current_time, slot_end):
+                    current_time += timedelta(minutes=30)
                     continue
-                if self._is_in_recess(start, end):
-                    continue
-                if not self._has_overlap(day, start, end, allow_parallel_labs=True):
-                    lab_slots.append((start.strftime("%H:%M"), end.strftime("%H:%M")))
+                
+                # Check for overlaps with allow_parallel_labs
+                if not self._has_overlap(day, current_time, slot_end, allow_parallel_labs=True):
+                    lab_slots.append((current_time.strftime("%H:%M"), slot_end.strftime("%H:%M")))
+                
+                current_time += timedelta(minutes=30)  # Scan in 30-minute increments
+            
             return lab_slots
 
         if self.use_reference_periods and self.period_slots:
@@ -165,7 +174,7 @@ class ScheduleGenerator:
                 end_str = slot_end.strftime("%H:%M")
                 available_slots.append((start_str, end_str))
             
-            current_time += timedelta(hours=duration)  # Move in duration-sized increments
+            current_time += timedelta(minutes=30)  # Always move in 30-min increments for dense slot generation
         
         return available_slots    
     def _is_in_recess(self, start: datetime, end: datetime) -> bool:
