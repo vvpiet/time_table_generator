@@ -56,6 +56,9 @@ def create_generator(semester: str):
     config = st.session_state.schedule_config
     if config is None:
         return None
+    days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    if config.get('include_saturday'):
+        days.append('Saturday')
     generator = ScheduleGenerator(
         morning_start=config['morning_start'],
         morning_end=config['morning_end'],
@@ -63,7 +66,8 @@ def create_generator(semester: str):
         short_recess_end=config['short_recess_end'],
         long_recess_start=config['long_recess_start'],
         long_recess_end=config['long_recess_end'],
-        use_reference_periods=config['use_reference_periods']
+        use_reference_periods=config['use_reference_periods'],
+        days=days
     )
     st.session_state.schedule_generators[semester] = generator
     return generator
@@ -133,7 +137,7 @@ def get_semester_batch_prefix(semester: str) -> str:
 
 def apply_rotating_batch_assignment(rows: list, batch_size_map: dict) -> list:
     """Assign rotating batches to lab courses at same time slot with daily rotation."""
-    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     
     if not rows:
         return rows
@@ -190,7 +194,7 @@ def apply_rotating_batch_assignment(rows: list, batch_size_map: dict) -> list:
 
 
 def _get_day_order(day: str) -> int:
-    order = {'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5}
+    order = {'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6}
     return order.get(day, 99)
 
 
@@ -230,6 +234,8 @@ with st.sidebar:
         index=0
     )
     
+    include_saturday = st.checkbox("Allow Saturday classes", value=False)
+
     if st.button("Initialize Schedule", use_container_width=True, key="init_btn"):
         try:
             st.session_state.schedule_config = {
@@ -239,7 +245,8 @@ with st.sidebar:
                 'short_recess_end': short_recess_end.strftime("%H:%M"),
                 'long_recess_start': long_recess_start.strftime("%H:%M"),
                 'long_recess_end': long_recess_end.strftime("%H:%M"),
-                'use_reference_periods': schedule_layout == "Reference period layout (image style)"
+                'use_reference_periods': schedule_layout == "Reference period layout (image style)",
+                'include_saturday': include_saturday
             }
             reset_schedule_state()
             st.success("✅ Schedule initialized successfully!")
@@ -524,7 +531,7 @@ with tab1:
                                 continue
                             
                             duration = lab_course['duration']
-                            all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+                            all_days = generator.days
                             hours_per_week = lab_course.get('hours_per_week', 0)
                             num_sessions = max(1, math.ceil(hours_per_week / duration)) if hours_per_week > 0 else 1
                             sessions_scheduled = 0
@@ -587,7 +594,7 @@ with tab1:
                                 failed_courses.append(course_data['code'])
                                 continue
                             
-                            all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+                            all_days = generator.days
                             hours_per_week = course_data.get('hours_per_week', 0)
                             num_sessions = max(1, math.ceil(hours_per_week / course_data['duration'])) if hours_per_week > 0 else 1
                             sessions_scheduled = 0
@@ -678,12 +685,13 @@ with tab2:
     else:
         semester_options = sorted(st.session_state.timetable_df['Semester'].unique())
         selected_semester_view = st.selectbox("Select Semester to View", ["All"] + semester_options, index=0)
-        
-        selected_view_day = st.selectbox("Select Day to View", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])
-        
+
         display_df = st.session_state.timetable_df
         if selected_semester_view != "All":
             display_df = display_df[display_df['Semester'] == selected_semester_view]
+
+        day_options = sorted(display_df['Day'].unique(), key=_get_day_order) if not display_df.empty else ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        selected_view_day = st.selectbox("Select Day to View", day_options)
         
         # Display complete timetable
         st.subheader("Complete Timetable")

@@ -47,7 +47,8 @@ class ScheduleGenerator:
     def __init__(self, morning_start: str, morning_end: str, 
                  short_recess_start: str, short_recess_end: str,
                  long_recess_start: str, long_recess_end: str,
-                 use_reference_periods: bool = False):
+                 use_reference_periods: bool = False,
+                 days: list = None):
         """
         Initialize the schedule generator
         Times should be in HH:MM format (24-hour)
@@ -59,10 +60,10 @@ class ScheduleGenerator:
         self.long_recess_start = datetime.strptime(long_recess_start, "%H:%M")
         self.long_recess_end = datetime.strptime(long_recess_end, "%H:%M")
         self.use_reference_periods = use_reference_periods
+        self.days = days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
         
-        self.occupied_slots = {day: [] for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']}
+        self.occupied_slots = {day: [] for day in self.days}
         self.timetable = []
-        self.days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
         self.period_slots = []
         
         if self.use_reference_periods:
@@ -100,7 +101,7 @@ class ScheduleGenerator:
             period_label += 1
             current = next_end
     
-    def get_available_slots(self, day: str, duration: float, session_type: str = 'Theory', lecture: Lecture = None) -> List[Tuple[str, str]]:
+    def get_available_slots(self, day: str, duration: float, session_type: str = 'Theory', lecture: Lecture = None, **kwargs) -> List[Tuple[str, str]]:
         """Get all available time slots for a given duration on a specific day"""
         available_slots = []
         allow_parallel_labs = session_type == 'Lab'
