@@ -405,7 +405,9 @@ class TimetableExporter:
                 datetime.strptime(str(x).split('-')[0].strip(), '%H:%M') if '-' in str(x) else datetime.min
             ))
             
-            days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+            # Determine which days are present for this semester (include Saturday if used)
+            possible_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+            days = [d for d in possible_days if d in sem_data['Day'].unique()]
             
             # Create matrix: rows = time slots, columns = days
             table = doc.add_table(rows=len(time_slots) + 1, cols=len(days) + 1)
@@ -488,7 +490,8 @@ class TimetableExporter:
         # Group by day
         days = timetable_df['Day'].unique()
         
-        for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
+        possible_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+        for day in possible_days:
             if day not in days:
                 continue
             
@@ -613,7 +616,8 @@ class TimetableExporter:
             branch_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
             doc.add_paragraph()
 
-            days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+            possible_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+            days = [d for d in possible_days if d in timetable_df['Day'].unique()]
             table = doc.add_table(rows=len(period_definitions) + 1, cols=len(days) + 1)
             table.style = 'Light Grid Accent 1'
 
@@ -681,7 +685,8 @@ class TimetableExporter:
             unique_times = sorted(timetable_df['Time'].dropna().unique())
             period_labels = [(t, t) for t in unique_times]
         
-        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+            possible_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+            days = [d for d in possible_days if d in timetable_df['Day'].unique()]
 
         matrix_rows = []
         for period_label, time_label in period_labels:

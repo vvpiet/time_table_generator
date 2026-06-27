@@ -506,6 +506,8 @@ with tab1:
                 with st.spinner("⏳ Generating timetable..."):
                     try:
                         reset_schedule_state()
+                        # Keep a copy of the original pending courses so we can retry if needed
+                        original_pending = list(st.session_state.pending_courses)
                         
                         failed_courses = []
                         batch_size_map = st.session_state.batch_sizes
@@ -636,6 +638,114 @@ with tab1:
                         
                         st.session_state.timetable_df = pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
                         st.session_state.schedule_generated = True
+                        # If some courses failed, try extending schedule to Saturday and retry those courses
+                        if failed_courses:
+                            # Add Saturday to each generator if not already present
+                            for gen in st.session_state.schedule_generators.values():
+                                if 'Saturday' not in gen.days:
+                                    gen.days.append('Saturday')
+                                    gen.occupied_slots['Saturday'] = []
+
+                            retried = []
+                            # Try to reschedule only the failed courses using original_pending data
+                            for code in list(failed_courses):
+                                # find course data
+                                match = next((c for c in original_pending if c['code'] == code), None)
+                                if not match:
+                                    continue
+                                semester = match['semester']
+                                generator = get_generator_for_semester(semester)
+                                if generator is None:
+                                    continue
+
+                                # attempt scheduling based on type
+                                duration = match['duration']
+                                hours_per_week = match.get('hours_per_week', 0)
+                                num_sessions = max(1, math.ceil(hours_per_week / duration)) if hours_per_week > 0 else 1
+                                sessions_scheduled = 0
+                                days_to_try = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+                                if match['type'] == 'Lab':
+                                    for day in days_to_try:
+                                        if sessions_scheduled >= num_sessions:
+                                            break
+                                        available_slots = generator.get_available_slots(day, duration, session_type='Lab')
+                                        if not available_slots:
+                                            continue
+                                        slot_start, slot_end = available_slots[0]
+                                        lecture = Lecture(
+                                            course_code=match['code'],
+                                            course_name=match['name'],
+                                            instructor=match['instructor'],
+                                            session_type=match['type'],
+                                            sem=match['semester'],
+                                            section=match['section'],
+                                            branch=match.get('branch', ''),
+                                            duration=match['duration'],
+                                            batch='All',
+                                            hours_per_week=match.get('hours_per_week', 0)
+                                        )
+                                        if generator.assign_lecture(lecture, day, slot_start, slot_end, allow_parallel_labs=True):
+                                            st.session_state.lectures.append(lecture)
+                                            sessions_scheduled += 1
+
+                                else:
+                                    used_day_slots = set()
+                                    for session_num in range(num_sessions):
+                                        assigned = False
+                                        for day in days_to_try:
+                                            available_slots = generator.get_available_slots(day, duration)
+                                            if not available_slots:
+                                                continue
+                                            slot_start, slot_end = available_slots[0]
+                                            slot_key = (day, slot_start, slot_end)
+                                            if slot_key in used_day_slots:
+                                                continue
+                                            lecture = Lecture(
+                                                course_code=match['code'],
+                                                course_name=match['name'],
+                                                instructor=match['instructor'],
+                                                session_type=match['type'],
+                                                sem=match['semester'],
+                                                section=match['section'],
+                                                branch=match.get('branch', ''),
+                                                duration=match['duration'],
+                                                batch='All',
+                                                hours_per_week=match.get('hours_per_week', 0)
+                                            )
+                                            if generator.assign_lecture(lecture, day, slot_start, slot_end):
+                                                st.session_state.lectures.append(lecture)
+                                                used_day_slots.add(slot_key)
+                                                sessions_scheduled += 1
+                                                assigned = True
+                                                break
+                                        if not assigned:
+                                            break
+
+                                if sessions_scheduled > 0:
+                                    # succeeded on retry
+                                    failed_courses.remove(code)
+                                    retried.append(code)
+
+                            # rebuild timetable with new assignments
+                            all_rows = []
+                            for gen in st.session_state.schedule_generators.values():
+                                gen_df = gen.get_complete_timetable()
+                                if isinstance(gen_df, pd.DataFrame) and not gen_df.empty:
+                                    all_rows.extend(gen_df.to_dict(orient='records'))
+
+                            if all_rows:
+                                all_rows = apply_rotating_batch_assignment(all_rows, batch_size_map)
+                                all_rows = sorted(
+                                    all_rows,
+                                    key=lambda r: (
+                                        int(''.join([c for c in str(r.get('Semester', '')) if c.isdigit()]) or 0),
+                                        _get_day_order(r.get('Day', '')),
+                                        datetime.strptime(str(r.get('Time', '')).split('-')[0].strip(), '%H:%M') if isinstance(r.get('Time', ''), str) and '-' in r.get('Time', '') else datetime.min
+                                    )
+                                )
+                            st.session_state.timetable_df = pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+
                         st.session_state.pending_courses = []
                         
                         if failed_courses:
