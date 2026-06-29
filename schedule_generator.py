@@ -205,18 +205,37 @@ class ScheduleGenerator:
                 return slot['label']
         return f"{start.strftime('%H:%M')} - {end.strftime('%H:%M')}"
 
-    def assign_lecture(self, lecture: Lecture, day: str, start_time: str, end_time: str, allow_parallel_labs: bool = False) -> bool:
+    def assign_lecture(self, lecture: Lecture, day: str, start_time: str, end_time: str, allow_parallel_labs: bool = False, allow_theory_afternoon: bool = False) -> bool:
         """
         Assign a lecture to a time slot
         
         Args:
             allow_parallel_labs: If True, allows multiple labs at same time (different lab spaces).
                                  Still prevents instructor conflicts.
+            allow_theory_afternoon: If True, allows theory courses in afternoon slots with relaxed
+                                    instructor parallelism (for optimization when morning slots full).
         """
         start = datetime.strptime(start_time, "%H:%M")
         end = datetime.strptime(end_time, "%H:%M")
         
-        if allow_parallel_labs and lecture.session_type == 'Lab':
+        # OPTIMIZATION: For theory courses in afternoon slots, use relaxed instructor checking
+        if allow_theory_afternoon and lecture.session_type == 'Theory' and start >= self.long_recess_end:
+            for occupied in self.occupied_slots[day]:
+                if occupied['start'] < end and occupied['end'] > start:
+                    occupied_lecture = occupied.get('lecture')
+                    # Allow theory to overlap with labs (different spaces)
+                    if occupied_lecture and occupied_lecture.session_type == 'Lab':
+                        if occupied_lecture.instructor == lecture.instructor:
+                            return False
+                        continue
+                    # Allow theory to share afternoon with other theory by same instructor (within limits)
+                    if occupied_lecture and occupied_lecture.session_type == 'Theory':
+                        if occupied_lecture.instructor == lecture.instructor:
+                            # Allow same instructor in afternoon (relaxed rule)
+                            continue
+                        return False
+                    return False
+        elif allow_parallel_labs and lecture.session_type == 'Lab':
             for occupied in self.occupied_slots[day]:
                 if occupied['start'] < end and occupied['end'] > start:
                     occupied_lecture = occupied.get('lecture')
