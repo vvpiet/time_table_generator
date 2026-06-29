@@ -649,10 +649,12 @@ class TimetableExporter:
                         values = []
                         for _, row in period_match.iterrows():
                             label = f"{row['Course Code']}"
-                            if pd.notna(row['Batch']) and str(row['Batch']) != 'All':
-                                label += f" (B{row['Batch']})"
-                            label += f"\n{row['Course Name']}"
-                            values.append(label)
+                        if pd.notna(row['Batch']) and str(row['Batch']) != 'All':
+                            label += f" (B{row['Batch']})"
+                        if pd.notna(row['Branch']) and str(row['Branch']).strip():
+                            label += f" {str(row['Branch']).strip()}"
+                        label += f"\n{row['Course Name']}"
+                        values.append(label)
                         cell_text = "\n".join(values)
                     row_cells[day_index].text = cell_text
 
@@ -684,9 +686,9 @@ class TimetableExporter:
             # Fall back to Time column for flexible timing
             unique_times = sorted(timetable_df['Time'].dropna().unique())
             period_labels = [(t, t) for t in unique_times]
-        
-            possible_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-            days = [d for d in possible_days if d in timetable_df['Day'].unique()]
+
+        possible_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+        days = [d for d in possible_days if d in timetable_df['Day'].unique()]
 
         matrix_rows = []
         for period_label, time_label in period_labels:
@@ -708,6 +710,8 @@ class TimetableExporter:
                         label = f"{item['Course Code']}"
                         if pd.notna(item['Batch']) and str(item['Batch']) != 'All':
                             label += f" (B{item['Batch']})"
+                        if pd.notna(item['Branch']) and str(item['Branch']).strip():
+                            label += f" {str(item['Branch']).strip()}"
                         label += f" - {item['Course Name']}"
                         values.append(label)
                     row[day] = " | ".join(values)
