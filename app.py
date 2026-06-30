@@ -198,6 +198,58 @@ def _get_day_order(day: str) -> int:
     return order.get(day, 99)
 
 
+def check_schedule_conflicts(lectures_list: list) -> list:
+    """Check for instructor, batch, and course conflicts in generated schedule"""
+    conflicts = []
+    from datetime import datetime as dt
+    
+    # Parse all lecture times
+    parsed_lectures = []
+    for lecture in lectures_list:
+        if not hasattr(lecture, 'assigned_slot') or not lecture.assigned_slot:
+            continue
+        try:
+            time_parts = lecture.assigned_slot.split('-')
+            start_time = dt.strptime(time_parts[0].strip(), '%H:%M')
+            end_time = dt.strptime(time_parts[1].strip(), '%H:%M')
+            parsed_lectures.append({
+                'lecture': lecture,
+                'day': lecture.day,
+                'start': start_time,
+                'end': end_time,
+                'instructor': lecture.instructor,
+                'batch': lecture.batch,
+                'code': lecture.course_code,
+                'sem': lecture.sem
+            })
+        except Exception:
+            continue
+    
+    # Check for overlaps
+    for i in range(len(parsed_lectures)):
+        for j in range(i + 1, len(parsed_lectures)):
+            a = parsed_lectures[i]
+            b = parsed_lectures[j]
+            
+            # Same day and time?
+            if a['day'] != b['day'] or not (a['start'] < b['end'] and a['end'] > b['start']):
+                continue
+            
+            # Same semester?
+            if a['sem'] != b['sem']:
+                continue
+            
+            # Instructor conflict
+            if a['instructor'] == b['instructor']:
+                conflicts.append(f"Instructor {a['instructor']} teaching {a['code']} and {b['code']} at same time on {a['day']}")
+            
+            # Batch conflict
+            if a['batch'] != 'All' and b['batch'] != 'All' and a['batch'] == b['batch']:
+                conflicts.append(f"Batch {a['batch']} attending {a['code']} and {b['code']} at same time on {a['day']}")
+    
+    return conflicts
+
+
 def reset_schedule_state():
     st.session_state.schedule_generators = {}
     st.session_state.timetable_df = None
@@ -716,6 +768,14 @@ with tab1:
                             )
                         
                         st.session_state.timetable_df = pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+                        
+                        # Check for schedule conflicts
+                        conflicts = check_schedule_conflicts(st.session_state.lectures)
+                        if conflicts:
+                            st.warning("⚠️ **Conflict Detection:**\n" + "\n".join(f"- {c}" for c in conflicts[:10]))
+                            if len(conflicts) > 10:
+                                st.warning(f"... and {len(conflicts) - 10} more conflicts detected")
+                        
                         st.session_state.schedule_generated = True
 
                         st.session_state.pending_courses = []

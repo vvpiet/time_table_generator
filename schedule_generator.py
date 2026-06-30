@@ -74,32 +74,29 @@ class ScheduleGenerator:
         self.period_slots = []
         period_label = 1
         current = self.morning_start
+        period_length = timedelta(hours=1)
 
-        while current + timedelta(minutes=45) <= self.morning_end:
-            # Skip intervals that overlap any recess
-            if self._is_in_recess(current, current + timedelta(minutes=45)):
-                if current < self.short_recess_end and current + timedelta(minutes=45) > self.short_recess_start:
-                    current = self.short_recess_end
-                    continue
-                if current < self.long_recess_end and current + timedelta(minutes=45) > self.long_recess_start:
-                    current = self.long_recess_end
-                    continue
+        while current + period_length <= self.morning_end:
+            slot_start = current
+            slot_end = current + period_length
 
-            next_end = current + timedelta(hours=1)
-            if next_end > self.morning_end:
-                next_end = self.morning_end
-
-            # Skip invalid zero-length periods
-            if next_end <= current:
-                break
+            if self._is_in_recess(slot_start, slot_end):
+                # Jump to the end of the first overlapping recess and try again
+                next_start = slot_end
+                if slot_start < self.short_recess_end and slot_end > self.short_recess_start:
+                    next_start = max(next_start, self.short_recess_end)
+                if slot_start < self.long_recess_end and slot_end > self.long_recess_start:
+                    next_start = max(next_start, self.long_recess_end)
+                current = next_start
+                continue
 
             self.period_slots.append({
                 'label': f'Period {period_label}',
-                'start': current,
-                'end': next_end
+                'start': slot_start,
+                'end': slot_end
             })
             period_label += 1
-            current = next_end
+            current = slot_end
     
     def get_available_slots(self, day: str, duration: float, session_type: str = 'Theory', lecture: Lecture = None, **kwargs) -> List[Tuple[str, str]]:
         """Get all available time slots for a given duration on a specific day"""
@@ -186,16 +183,31 @@ class ScheduleGenerator:
         return False
     
     def _has_overlap(self, day: str, start: datetime, end: datetime, lecture: Lecture = None, allow_parallel_labs: bool = False) -> bool:
-        """Check if time slot overlaps with occupied slots"""
+        """Check if time slot overlaps with occupied slots, checking instructor and batch conflicts"""
         for occupied in self.occupied_slots[day]:
             if occupied['start'] < end and occupied['end'] > start:
                 occupied_lecture = occupied.get('lecture')
+                
+                # Lab parallelism: allow multiple labs at same time if different instructors
                 if allow_parallel_labs and occupied_lecture and occupied_lecture.session_type == 'Lab':
                     if lecture and lecture.session_type == 'Lab':
+                        # Two labs: check if same instructor (conflict)
                         if occupied_lecture.instructor == lecture.instructor:
                             return True
                         continue
+                    # Theory vs Lab: always blocked
                     return True
+                
+                # Hard conflict: any overlap for non-parallel courses
+                # Check instructor conflict
+                if occupied_lecture and lecture:
+                    if occupied_lecture.instructor == lecture.instructor:
+                        return True
+                    # Check batch conflict (same batch can't be in two places)
+                    if lecture.batch != 'All' and occupied_lecture.batch != 'All':
+                        if lecture.batch == occupied_lecture.batch:
+                            return True
+                
                 return True
         return False
     
@@ -255,6 +267,7 @@ class ScheduleGenerator:
         self.timetable.append({
             'Day': day,
             'Time': lecture.assigned_slot,
+            'Period': lecture.assigned_period,
             'Course Code': lecture.course_code,
             'Course Name': lecture.course_name,
             'Branch': lecture.branch,

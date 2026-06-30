@@ -552,51 +552,13 @@ class TimetableExporter:
 
     @staticmethod
     def export_timetable_matrix_word(timetable_df: pd.DataFrame, title: str = "College Timetable") -> bytes:
-        """Export timetable as a matrix-style Word document."""
+        """Export timetable as a matrix-style Word document - Time Slots x Days"""
         doc = Document()
         TimetableExporter._add_word_header(doc, timetable_df, "Time Table")
 
-        timetable_df = timetable_df.copy()
-        timetable_df['RowPeriod'] = timetable_df.apply(TimetableExporter._get_row_period_label, axis=1)
-        # Preserve order of first appearance
-        seen = []
-        for v in timetable_df['RowPeriod'].tolist():
-            if v and v not in seen:
-                seen.append(v)
-        period_values = seen
-
-        # Try to sort by start time when possible (e.g., '08:30 - 09:30' or 'P1')
-        def parse_start(label: str):
-            if not label:
-                return datetime.min
-            label = str(label).strip()
-            if '-' in label:
-                try:
-                    start = label.split('-')[0].strip()
-                    return datetime.strptime(start, '%H:%M')
-                except Exception:
-                    return datetime.min
-            m = re.match(r'[Pp](\d+)', label)
-            if m:
-                try:
-                    idx = int(m.group(1))
-                    return datetime.combine(datetime.today(), datetime.min.time()) + timedelta(minutes=idx * 30)
-                except Exception:
-                    return datetime.min
-            return datetime.min
-
-        period_values_sorted = sorted(period_values, key=parse_start)
-        period_time_mapping = {}
-        for _, row in timetable_df.iterrows():
-            period_label = row['RowPeriod']
-            time_value = row.get('Time', '')
-            if pd.notna(period_label) and period_label and period_label not in period_time_mapping:
-                period_time_mapping[period_label] = str(time_value).strip() if pd.notna(time_value) else ''
-        period_definitions = [(p, period_time_mapping.get(p, p)) for p in period_values_sorted]
-
         semesters = sorted(timetable_df['Semester'].dropna().unique())
         for sem_index, semester in enumerate(semesters):
-            sem_data = timetable_df[timetable_df['Semester'] == semester]
+            sem_data = timetable_df[timetable_df['Semester'] == semester].copy()
             if sem_data.empty:
                 continue
             if sem_index > 0:
@@ -608,6 +570,7 @@ class TimetableExporter:
             sem_run.font.bold = True
             sem_run.font.color.rgb = RGBColor(0, 0, 139)
             sem_heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
             branch_label = TimetableExporter._get_branch_label(sem_data)
             branch_para = doc.add_paragraph()
             branch_run = branch_para.add_run(f"Branch: {branch_label}")
@@ -616,50 +579,88 @@ class TimetableExporter:
             branch_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
             doc.add_paragraph()
 
+            # Extract unique time slots sorted by start time
+            time_slots_raw = sorted(sem_data['Time'].dropna().unique(), key=lambda x: (
+                datetime.strptime(str(x).split('-')[0].strip(), '%H:%M') if '-' in str(x) else datetime.min
+            ))
+            
+            # Determine days
             possible_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-            days = [d for d in possible_days if d in timetable_df['Day'].unique()]
-            table = doc.add_table(rows=len(period_definitions) + 1, cols=len(days) + 1)
+            days = [d for d in possible_days if d in sem_data['Day'].unique()]
+            
+            # Create table: rows = time slots, columns = days + time slot label
+            num_rows = len(time_slots_raw) + 1  # +1 for header
+            num_cols = len(days) + 1  # +1 for time slot column
+            table = doc.add_table(rows=num_rows, cols=num_cols)
             table.style = 'Light Grid Accent 1'
+            table.autofit = False
 
+            # Set column widths
+            widths = [Inches(1.2)] + [Inches(1.0)] * len(days)
+            for row in table.rows:
+                for idx, width in enumerate(widths):
+                    row.cells[idx].width = width
+
+            # Header row
             header_cells = table.rows[0].cells
             header_cells[0].text = "Time Slot"
-            for i, day in enumerate(days, start=1):
-                header_cells[i].text = day
+            header_cells[0].paragraphs[0].runs[0].font.bold = True
+            header_cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-            for cell in header_cells:
-                for paragraph in cell.paragraphs:
-                    for run in paragraph.runs:
-                        run.font.bold = True
-                        run.font.color.rgb = RGBColor(0, 0, 0)
-                    paragraph.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for day_idx, day in enumerate(days):
+                header_cells[day_idx + 1].text = day
+                header_cells[day_idx + 1].paragraphs[0].runs[0].font.bold = True
+                header_cells[day_idx + 1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+            # Shade header
             from docx.oxml import parse_xml
             from docx.oxml.ns import nsdecls
             shading_elm = parse_xml(r'<w:shd {} w:fill="D9D9D9"/>'.format(nsdecls('w')))
             for cell in header_cells:
                 cell._element.get_or_add_tcPr().append(shading_elm)
 
-            for row_index, (period_label, time_label) in enumerate(period_definitions, start=1):
-                row_cells = table.rows[row_index].cells
-                row_cells[0].text = f"{period_label}\n{time_label}" if time_label and time_label != period_label else time_label or period_label
-                for day_index, day in enumerate(days, start=1):
-                    cell_text = ""
-                    day_rows = sem_data[sem_data['Day'].str.strip() == day]
-                    period_match = day_rows[day_rows['RowPeriod'] == period_label]
-                    if not period_match.empty:
-                        values = []
-                        for _, row in period_match.iterrows():
-                            label = f"{row['Course Code']}"
-                        if pd.notna(row['Batch']) and str(row['Batch']) != 'All':
-                            label += f" (B{row['Batch']})"
-                        if pd.notna(row['Branch']) and str(row['Branch']).strip():
-                            label += f" {str(row['Branch']).strip()}"
-                        label += f"\n{row['Course Name']}"
-                        values.append(label)
-                        cell_text = "\n".join(values)
-                    row_cells[day_index].text = cell_text
+            # Fill matrix
+            for slot_idx, time_slot in enumerate(time_slots_raw):
+                row_idx = slot_idx + 1
+                row_cells = table.rows[row_idx].cells
+                
+                # Time slot label
+                row_cells[0].text = str(time_slot)
+                row_cells[0].paragraphs[0].runs[0].font.bold = True
+                row_cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                # For each day, collect all courses at this time slot
+                for day_idx, day in enumerate(days):
+                    col_idx = day_idx + 1
+                    courses_this_slot = sem_data[(sem_data['Day'] == day) & (sem_data['Time'] == time_slot)]
+                    
+                    # Clear cell
+                    cell = row_cells[col_idx]
+                    cell.text = ""
+                    
+                    # Stack courses in cell
+                    if not courses_this_slot.empty:
+                        course_labels = []
+                        for _, course_row in courses_this_slot.iterrows():
+                            label = str(course_row['Course Code'])
+                            batch = str(course_row.get('Batch', 'All')).strip()
+                            if batch and batch != 'All':
+                                label += f" ({batch})"
+                            course_labels.append(label)
+                        
+                        cell_text = "\n".join(course_labels)
+                        cell.text = cell_text
+                        
+                        # Format text
+                        for paragraph in cell.paragraphs:
+                            for run in paragraph.runs:
+                                run.font.size = Pt(10)
+                            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
             doc.add_paragraph()
             TimetableExporter._append_class_coordinator_section(doc, sem_data, semester=semester)
+            
+            # Check overlaps
             sem_issues = TimetableExporter._find_timetable_overlaps(sem_data)
             TimetableExporter._append_acknowledgement(doc, sem_issues)
 
