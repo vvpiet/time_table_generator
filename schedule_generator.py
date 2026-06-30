@@ -20,6 +20,9 @@ def normalize_session_type(session_type: str) -> str:
     return 'Theory' if 'theory' in value else 'Lab' if 'lab' in value or 'project' in value else 'Theory'
 
 
+# Backward compatibility alias for older import names
+normalize_session = normalize_session_type
+
 class TimeSlot:
     """Represents a time slot in the timetable"""
     def __init__(self, start_time: str, end_time: str):
