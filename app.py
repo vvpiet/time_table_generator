@@ -165,9 +165,10 @@ def apply_rotating_batch_assignment(rows: list, batch_size_map: dict) -> list:
         batch_size = max(1, int(batch_size))
         prefix = get_semester_batch_prefix(semester)
 
-        day_rows_sorted = sorted(lab_rows, key=lambda x: (str(x.get('Course Code', '')).strip(), str(x.get('Course Name', '')).strip()))
-        day_offset = day_order.index(day) % batch_size
-        for index, row in enumerate(day_rows_sorted):
+        # Preserve input ordering so batch1 -> first lab course, batch2 -> second, etc.
+        day_rows_ordered = list(lab_rows)
+        day_offset = day_order.index(day) % batch_size if day in day_order else 0
+        for index, row in enumerate(day_rows_ordered):
             batch_num = ((index + day_offset) % batch_size) + 1
             row['Batch'] = f"{prefix}{batch_num}"
 
@@ -357,9 +358,9 @@ with tab1:
                                         import_errors.append(f"Row {idx+2}: Invalid session type '{stype}'")
                                         continue
                                     
-                                    # Set duration to 1.0 for all courses (theory and lab)
+                                    # Set duration by type: theory = 1 hour, lab = 2 hours
                                     # Duration represents hours per single session
-                                    duration = 1.0
+                                    duration = 2.0 if stype == 'Lab' else 1.0
                                     batch = 'All'
                                     
                                     # For lab courses, set batch size if provided
@@ -470,13 +471,13 @@ with tab1:
         if session_type == "Lab":
             st.success(f"✅ Lab batches for {semester}: {batch_labels} (auto-assigned)")
         
-        # Set duration to 1.0 for all courses (theory and lab)
+        # Set duration by type: theory = 1 hour, lab = 2 hours
         # Duration represents hours per single session
-        duration = 1.0
+        duration = 2.0 if session_type == 'Lab' else 1.0
         if session_type == "Theory":
             st.info("📝 Theory lectures: 1 hour per session")
         else:
-            st.info("🔬 Lab sessions: 1 hour per session")
+            st.info("🔬 Lab sessions: 2 hours per session")
         
         # Add course button
         col1, col2 = st.columns([3, 1])

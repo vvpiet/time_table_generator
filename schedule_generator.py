@@ -86,107 +86,116 @@ class ScheduleGenerator:
             self._build_reference_periods()
 
     def _build_reference_periods(self):
-        """Build reference periods from configured timing and recess settings."""
+        """Build fixed reference periods for the timetable."""
         self.period_slots = []
+        fixed_slots = [
+            ('10:00', '11:00'),
+            ('11:00', '12:00'),
+            ('12:00', '13:00'),
+            ('13:45', '14:45'),
+            ('14:45', '15:30'),
+            ('15:45', '16:45'),
+            ('16:45', '17:30')
+        ]
         period_label = 1
-        current = self.morning_start
-        period_length = timedelta(hours=1)
-
-        while current + period_length <= self.morning_end:
-            slot_start = current
-            slot_end = current + period_length
-
-            if self._is_in_recess(slot_start, slot_end):
-                # Jump to the end of the first overlapping recess and try again
-                next_start = slot_end
-                if slot_start < self.short_recess_end and slot_end > self.short_recess_start:
-                    next_start = max(next_start, self.short_recess_end)
-                if slot_start < self.long_recess_end and slot_end > self.long_recess_start:
-                    next_start = max(next_start, self.long_recess_end)
-                current = next_start
+        for start_str, end_str in fixed_slots:
+            start = datetime.strptime(start_str, '%H:%M')
+            end = datetime.strptime(end_str, '%H:%M')
+            if start < self.morning_start or end > self.morning_end:
                 continue
-
+            if self._is_in_recess(start, end):
+                continue
             self.period_slots.append({
                 'label': f'Period {period_label}',
-                'start': slot_start,
-                'end': slot_end
+                'start': start,
+                'end': end
             })
             period_label += 1
-            current = slot_end
-    
+
+    def _get_fixed_theory_start_times(self) -> List[str]:
+        """Return exact start times for 1-hour theory slots."""
+        return ['10:00', '11:00', '12:00', '13:45', '15:45']
+
+    def _get_fixed_lab_start_times(self, lecture: Lecture = None) -> List[str]:
+        """Return a fixed lab start time for the semester to keep lab slots consistent."""
+        candidates = ['13:45', '14:45']
+        if lecture and getattr(lecture, 'sem', None):
+            digits = ''.join([c for c in str(lecture.sem) if c.isdigit()])
+            if digits:
+                index = (int(digits) - 1) % len(candidates)
+                return [candidates[index]]
+        return [candidates[0]]
+
     def get_available_slots(self, day: str, duration: float, session_type: str = 'Theory', lecture: Lecture = None, **kwargs) -> List[Tuple[str, str]]:
         """Get all available time slots for a given duration on a specific day"""
         available_slots = []
         allow_parallel_labs = session_type == 'Lab'
-        
-        # For lab sessions, scan the afternoon period for available slots
+
         if session_type == 'Lab':
             lab_slots = []
-            # Start scanning from long_recess_end
-            current_time = self.long_recess_end
-            
-            while current_time < self.morning_end:
-                slot_end = current_time + timedelta(hours=duration)
-                
-                # Ensure slot doesn't exceed morning_end
+            # If using reference periods, try to find consecutive period slots
+            if self.use_reference_periods and self.period_slots:
+                # look for contiguous period ranges that sum to the required duration
+                for i in range(len(self.period_slots)):
+                    total = 0.0
+                    start = self.period_slots[i]['start']
+                    end = None
+                    for j in range(i, len(self.period_slots)):
+                        slot = self.period_slots[j]
+                        slot_duration = (slot['end'] - slot['start']).total_seconds() / 3600
+                        total += slot_duration
+                        end = slot['end']
+                        if abs(total - duration) < 0.01:
+                            # ensure combined slot is within bounds and not in recess
+                            if end > self.morning_end:
+                                break
+                            if self._is_in_recess(start, end):
+                                break
+                            if not self._has_overlap(day, start, end, lecture=lecture, allow_parallel_labs=True):
+                                lab_slots.append((start.strftime('%H:%M'), end.strftime('%H:%M')))
+                            break
+                        if total > duration:
+                            break
+                return lab_slots
+
+            # Flexible / exact start time mode: only consider fixed lab start times
+            for start_str in self._get_fixed_lab_start_times(lecture):
+                start_time = datetime.strptime(start_str, '%H:%M')
+                slot_end = start_time + timedelta(hours=duration)
                 if slot_end > self.morning_end:
-                    break
-                
-                # Check if slot is in recess
-                if self._is_in_recess(current_time, slot_end):
-                    current_time += timedelta(minutes=30)
                     continue
-                
-                # Check for overlaps with allow_parallel_labs
-                if not self._has_overlap(day, current_time, slot_end, lecture=lecture, allow_parallel_labs=True):
-                    lab_slots.append((current_time.strftime("%H:%M"), slot_end.strftime("%H:%M")))
-                
-                current_time += timedelta(minutes=30)  # Scan in 30-minute increments
-            
+                if self._is_in_recess(start_time, slot_end):
+                    continue
+                if not self._has_overlap(day, start_time, slot_end, lecture=lecture, allow_parallel_labs=True):
+                    lab_slots.append((start_time.strftime('%H:%M'), slot_end.strftime('%H:%M')))
             return lab_slots
 
         if self.use_reference_periods and self.period_slots:
             for slot in self.period_slots:
-                start = slot['start']
-                end = start + timedelta(hours=duration)
-                
-                if end > self.morning_end:
+                slot_duration = (slot['end'] - slot['start']).total_seconds() / 3600
+                if abs(slot_duration - duration) > 0.01:
                     continue
-                if self._is_in_recess(start, end):
+                if self._has_overlap(day, slot['start'], slot['end'], lecture=lecture, allow_parallel_labs=allow_parallel_labs):
                     continue
-                if not self._has_overlap(day, start, end, lecture=lecture, allow_parallel_labs=allow_parallel_labs):
-                    available_slots.append((start.strftime("%H:%M"), end.strftime("%H:%M")))
+                available_slots.append((slot['start'].strftime('%H:%M'), slot['end'].strftime('%H:%M')))
             return available_slots
-        
-        # In flexible mode, scan the day for valid slots using configured morning_start and morning_end times
-        current_time = self.morning_start
 
-        while current_time <= self.morning_end:
+        # In flexible mode, only consider exact configured start times, not intermediate offsets.
+        if duration == 1.0:
+            start_times = self._get_fixed_theory_start_times()
+        else:
+            start_times = self._get_fixed_lab_start_times(lecture)
+
+        for start_str in start_times:
+            current_time = datetime.strptime(start_str, '%H:%M')
             slot_end = current_time + timedelta(hours=duration)
-            
-            # Ensure slot ends within morning_end
             if slot_end > self.morning_end:
-                break
-            
-            # Check if slot falls within any recess period
-            if self._is_in_recess(current_time, slot_end):
-                # Jump to after the recess period that conflicts with current slot
-                if current_time < self.long_recess_end and slot_end > self.long_recess_start:
-                    current_time = self.long_recess_end
-                elif current_time < self.short_recess_end and slot_end > self.short_recess_start:
-                    current_time = self.short_recess_end
-                else:
-                    current_time += timedelta(minutes=30)
                 continue
-            
-            # Check if slot overlaps with any occupied slot
-            if not self._has_overlap(day, current_time, slot_end, allow_parallel_labs=allow_parallel_labs):
-                start_str = current_time.strftime("%H:%M")
-                end_str = slot_end.strftime("%H:%M")
-                available_slots.append((start_str, end_str))
-            
-            current_time += timedelta(minutes=30)  # Always move in 30-min increments for dense slot generation
-        
+            if self._is_in_recess(current_time, slot_end):
+                continue
+            if not self._has_overlap(day, current_time, slot_end, lecture=lecture, allow_parallel_labs=allow_parallel_labs):
+                available_slots.append((current_time.strftime('%H:%M'), slot_end.strftime('%H:%M')))
+
         return available_slots    
     def _is_in_recess(self, start: datetime, end: datetime) -> bool:
         """Check if time slot is during recess"""
