@@ -7,6 +7,19 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Tuple
 import pandas as pd
 
+
+def normalize_session_type(session_type: str) -> str:
+    """Normalize incoming type values to the internal scheduler values."""
+    if session_type is None:
+        return 'Theory'
+    value = str(session_type).strip().lower()
+    if value in {'lab', 'laboratory', 'practical', 'practical lab', 'project', 'project work', 'proj'}:
+        return 'Lab'
+    if value in {'theory', 'lecture', 'lectures', 'theoretical', 'rotation', 'rotational', 'rot', 'rotation type'}:
+        return 'Theory'
+    return 'Theory' if 'theory' in value else 'Lab' if 'lab' in value or 'project' in value else 'Theory'
+
+
 class TimeSlot:
     """Represents a time slot in the timetable"""
     def __init__(self, start_time: str, end_time: str):
@@ -183,31 +196,33 @@ class ScheduleGenerator:
         return False
     
     def _has_overlap(self, day: str, start: datetime, end: datetime, lecture: Lecture = None, allow_parallel_labs: bool = False) -> bool:
-        """Check if time slot overlaps with occupied slots, checking instructor and batch conflicts"""
+        """Check if time slot overlaps with occupied slots, checking instructor, batch and section conflicts."""
         for occupied in self.occupied_slots[day]:
             if occupied['start'] < end and occupied['end'] > start:
                 occupied_lecture = occupied.get('lecture')
-                
-                # Lab parallelism: allow multiple labs at same time if different instructors
-                if allow_parallel_labs and occupied_lecture and occupied_lecture.session_type == 'Lab':
-                    if lecture and lecture.session_type == 'Lab':
-                        # Two labs: check if same instructor (conflict)
-                        if occupied_lecture.instructor == lecture.instructor:
-                            return True
-                        continue
-                    # Theory vs Lab: always blocked
+
+                if not occupied_lecture or not lecture:
                     return True
-                
-                # Hard conflict: any overlap for non-parallel courses
-                # Check instructor conflict
-                if occupied_lecture and lecture:
+
+                # Lab parallelism is allowed only when both are labs, taught by different instructors,
+                # and they are not assigned to the same section/batch.
+                if allow_parallel_labs and occupied_lecture.session_type == 'Lab' and lecture.session_type == 'Lab':
                     if occupied_lecture.instructor == lecture.instructor:
                         return True
-                    # Check batch conflict (same batch can't be in two places)
-                    if lecture.batch != 'All' and occupied_lecture.batch != 'All':
-                        if lecture.batch == occupied_lecture.batch:
-                            return True
-                
+                    if occupied_lecture.section and lecture.section and occupied_lecture.section == lecture.section:
+                        return True
+                    if lecture.batch != 'All' and occupied_lecture.batch != 'All' and lecture.batch == occupied_lecture.batch:
+                        return True
+                    continue
+
+                # Any overlap with a different instructor, same batch or same section is a conflict.
+                if occupied_lecture.instructor == lecture.instructor:
+                    return True
+                if occupied_lecture.section and lecture.section and occupied_lecture.section == lecture.section:
+                    return True
+                if lecture.batch != 'All' and occupied_lecture.batch != 'All' and lecture.batch == occupied_lecture.batch:
+                    return True
+
                 return True
         return False
     
@@ -217,7 +232,7 @@ class ScheduleGenerator:
                 return slot['label']
         return f"{start.strftime('%H:%M')} - {end.strftime('%H:%M')}"
 
-    def assign_lecture(self, lecture: Lecture, day: str, start_time: str, end_time: str, allow_parallel_labs: bool = False, allow_theory_afternoon: bool = False) -> bool:
+    def assign_lecture(self, lecture: Lecture, day: str, start_time: str, end_time: str, allow_parallel_labs: bool = False, allow_theory_afternoon: bool = False, existing_lectures: List[Lecture] = None) -> bool:
         """
         Assign a lecture to a time slot
         
@@ -230,35 +245,37 @@ class ScheduleGenerator:
         start = datetime.strptime(start_time, "%H:%M")
         end = datetime.strptime(end_time, "%H:%M")
         
-        # OPTIMIZATION: For theory courses in afternoon slots, use relaxed instructor checking
-        if allow_theory_afternoon and lecture.session_type == 'Theory' and start >= self.long_recess_end:
-            for occupied in self.occupied_slots[day]:
-                if occupied['start'] < end and occupied['end'] > start:
-                    occupied_lecture = occupied.get('lecture')
-                    # Allow theory to overlap with labs (different spaces)
-                    if occupied_lecture and occupied_lecture.session_type == 'Lab':
-                        if occupied_lecture.instructor == lecture.instructor:
-                            return False
-                        continue
-                    # Allow theory to share afternoon with other theory by same instructor (within limits)
-                    if occupied_lecture and occupied_lecture.session_type == 'Theory':
-                        if occupied_lecture.instructor == lecture.instructor:
-                            # Allow same instructor in afternoon (relaxed rule)
-                            continue
-                        return False
-                    return False
-        elif allow_parallel_labs and lecture.session_type == 'Lab':
-            for occupied in self.occupied_slots[day]:
-                if occupied['start'] < end and occupied['end'] > start:
-                    occupied_lecture = occupied.get('lecture')
-                    if occupied_lecture and occupied_lecture.session_type == 'Lab':
-                        if occupied_lecture.instructor == lecture.instructor:
-                            return False
-                        continue
-                    return False
+        # Check the current generator's occupied slots first.
+        if allow_parallel_labs and lecture.session_type == 'Lab':
+            if self._has_overlap(day, start, end, lecture=lecture, allow_parallel_labs=True):
+                return False
         else:
             if self._has_overlap(day, start, end, lecture=lecture, allow_parallel_labs=allow_parallel_labs):
                 return False
+
+        # Check against all previously scheduled lectures for global conflicts.
+        if existing_lectures:
+            for other in existing_lectures:
+                if not getattr(other, 'day', None):
+                    continue
+                other_start = None
+                other_end = None
+                if getattr(other, 'assigned_slot', None):
+                    try:
+                        other_start_str, other_end_str = str(other.assigned_slot).split(' - ')
+                        other_start = datetime.strptime(other_start_str.strip(), '%H:%M')
+                        other_end = datetime.strptime(other_end_str.strip(), '%H:%M')
+                    except Exception:
+                        continue
+                if other.day != day or other_start is None or other_end is None:
+                    continue
+                if other_start < end and other_end > start:
+                    if other.instructor == lecture.instructor:
+                        return False
+                    if lecture.batch != 'All' and other.batch != 'All' and lecture.batch == other.batch:
+                        return False
+                    if lecture.section and other.section and lecture.section == other.section:
+                        return False
         
         self.occupied_slots[day].append({'start': start, 'end': end, 'lecture': lecture})
         lecture.assigned_slot = f"{start_time} - {end_time}"

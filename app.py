@@ -9,7 +9,7 @@ from datetime import datetime
 import json
 import math
 import plotly.express as px
-from schedule_generator import ScheduleGenerator, Lecture
+from schedule_generator import ScheduleGenerator, Lecture, normalize_session_type
 from export_handler import TimetableExporter
 
 # Page configuration
@@ -136,60 +136,41 @@ def get_semester_batch_prefix(semester: str) -> str:
 
 
 def apply_rotating_batch_assignment(rows: list, batch_size_map: dict) -> list:
-    """Assign rotating batches to lab courses at same time slot with daily rotation."""
+    """Assign distinct rotating batches to each lab course at a shared day/time slot."""
     day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-    
+
     if not rows:
         return rows
-    
-    # Group labs by (Semester, Time, Type='Lab')
+
     lab_groups = {}
     for row in rows:
         if row.get('Type') != 'Lab':
             continue
-        key = (row['Semester'], row['Time'])
+        key = (row['Semester'], row['Day'], row['Time'])
         if key not in lab_groups:
             lab_groups[key] = []
         lab_groups[key].append(row)
-    
-    # Assign rotating batches
-    for (semester, time_slot), lab_rows in lab_groups.items():
-        batch_size = batch_size_map.get(semester, 3)
+
+    for (semester, day, time_slot), lab_rows in lab_groups.items():
+        batch_size = 3
+        if semester in batch_size_map:
+            batch_size = batch_size_map[semester]
+        else:
+            sem_value = str(semester).strip().lower()
+            digits = ''.join([c for c in sem_value if c.isdigit()])
+            if digits and digits in batch_size_map:
+                batch_size = batch_size_map[digits]
+            elif sem_value in batch_size_map:
+                batch_size = batch_size_map[sem_value]
+        batch_size = max(1, int(batch_size))
         prefix = get_semester_batch_prefix(semester)
-        
-        # Group rows by day
-        rows_by_day = {}
-        for row in lab_rows:
-            day = row['Day']
-            if day not in rows_by_day:
-                rows_by_day[day] = []
-            rows_by_day[day].append(row)
-        
-        # Get unique courses in order of first appearance
-        unique_courses = []
-        for day in day_order:
-            if day in rows_by_day:
-                for row in rows_by_day[day]:
-                    course_code = row['Course Code']
-                    if course_code not in unique_courses:
-                        unique_courses.append(course_code)
-        
-        # Assign batches using global course position and daily rotation
-        for day_idx, day in enumerate(day_order):
-            if day not in rows_by_day:
-                continue
-            
-            rotation_offset = day_idx % batch_size
-            # Sort by course code to maintain consistent ordering within each day
-            day_rows_sorted = sorted(rows_by_day[day], key=lambda x: x['Course Code'])
-            
-            for row in day_rows_sorted:
-                # Get global course index from unique_courses list
-                course_idx = unique_courses.index(row['Course Code'])
-                # Apply rotation: add day offset to course index
-                batch_num = ((course_idx + rotation_offset) % batch_size) + 1
-                row['Batch'] = f"{prefix}{batch_num}"
-    
+
+        day_rows_sorted = sorted(lab_rows, key=lambda x: (str(x.get('Course Code', '')).strip(), str(x.get('Course Name', '')).strip()))
+        day_offset = day_order.index(day) % batch_size
+        for index, row in enumerate(day_rows_sorted):
+            batch_num = ((index + day_offset) % batch_size) + 1
+            row['Batch'] = f"{prefix}{batch_num}"
+
     return rows
 
 
@@ -242,6 +223,10 @@ def check_schedule_conflicts(lectures_list: list) -> list:
             # Instructor conflict
             if a['instructor'] == b['instructor']:
                 conflicts.append(f"Instructor {a['instructor']} teaching {a['code']} and {b['code']} at same time on {a['day']}")
+            
+            # Section conflict
+            if a['section'] and a['section'] == b['section']:
+                conflicts.append(f"Section {a['section']} attending {a['code']} and {b['code']} at same time on {a['day']}")
             
             # Batch conflict
             if a['batch'] != 'All' and b['batch'] != 'All' and a['batch'] == b['batch']:
@@ -365,12 +350,7 @@ with tab1:
                                             hours_per_week = 0
                                     
                                     # Normalize session type values
-                                    if stype.lower() == 'lab':
-                                        stype = 'Lab'
-                                    elif stype.lower() == 'theory':
-                                        stype = 'Theory'
-                                    elif stype.lower() == 'project':
-                                        stype = 'Lab'  # Treat projects like labs (batch-based)
+                                    stype = normalize_session_type(stype)
                                     
                                     # Validate session type
                                     if stype not in ['Theory', 'Lab']:
@@ -643,7 +623,7 @@ with tab1:
                                         batch=lab_course.get('batch', 'All'),
                                         hours_per_week=lab_course.get('hours_per_week', 0)
                                     )
-                                    if generator.assign_lecture(lecture, day, s_start, s_end, allow_parallel_labs=True):
+                                    if generator.assign_lecture(lecture, day, s_start, s_end, allow_parallel_labs=True, existing_lectures=st.session_state.lectures):
                                         st.session_state.lectures.append(lecture)
                                         sessions_scheduled += 1
                                         assigned = True
@@ -711,7 +691,7 @@ with tab1:
                                         if slot_key in used_day_slots:
                                             continue
 
-                                        if generator.assign_lecture(lecture_template, day, start_slot, end_slot):
+                                        if generator.assign_lecture(lecture_template, day, start_slot, end_slot, existing_lectures=st.session_state.lectures):
                                             st.session_state.lectures.append(lecture_template)
                                             used_day_slots.add(slot_key)
                                             sessions_scheduled += 1
@@ -719,21 +699,43 @@ with tab1:
                                             break
 
                                     if not assigned:
-                                        # OPTIMIZATION 1: Relax period restriction - allow afternoon lab slots for theory
-                                        lab_slots = generator.get_available_slots(day, course_data['duration'], session_type='Lab', lecture=lecture_template)
+                                        # Attempt afternoon allocation via lab-style slots if theory
+                                        # sessions cannot fit into the standard lecture periods.
+                                        lab_slots = generator.get_available_slots(
+                                            day,
+                                            course_data['duration'],
+                                            session_type='Lab',
+                                            lecture=lecture_template
+                                        )
                                         if lab_slots:
                                             idx2 = (day_index + sessions_scheduled) % len(lab_slots)
                                             for i in range(len(lab_slots)):
                                                 ls_idx = (idx2 + i) % len(lab_slots)
                                                 ls_start, ls_end = lab_slots[ls_idx]
-                                                lab_slot_key = (day, ls_start, ls_end)
-                                                if lab_slot_key in used_day_slots:
+                                                slot_key = (day, ls_start, ls_end)
+                                                if slot_key in used_day_slots:
                                                     continue
-                                                # OPTIMIZATION 2: Relax instructor parallelism - allow same instructor in afternoon
-                                                # Use allow_theory_afternoon=True to enable relaxed instructor checking in afternoon slots
-                                                if generator.assign_lecture(lecture_template, day, ls_start, ls_end, allow_parallel_labs=True, allow_theory_afternoon=True):
-                                                    st.session_state.lectures.append(lecture_template)
-                                                    used_day_slots.add(lab_slot_key)
+                                                alt_lecture = Lecture(
+                                                    course_code=course_data['code'],
+                                                    course_name=course_data['name'],
+                                                    instructor=course_data['instructor'],
+                                                    session_type=course_data['type'],
+                                                    sem=course_data['semester'],
+                                                    section=course_data['section'],
+                                                    branch=course_data.get('branch', ''),
+                                                    duration=course_data['duration'],
+                                                    batch='All',
+                                                    hours_per_week=course_data.get('hours_per_week', 0)
+                                                )
+                                                if generator.assign_lecture(
+                                                    alt_lecture,
+                                                    day,
+                                                    ls_start,
+                                                    ls_end,
+                                                    existing_lectures=st.session_state.lectures
+                                                ):
+                                                    st.session_state.lectures.append(alt_lecture)
+                                                    used_day_slots.add(slot_key)
                                                     sessions_scheduled += 1
                                                     assigned = True
                                                     break
@@ -923,7 +925,7 @@ with tab5:
         
         with col1:
             st.subheader("Export as CSV")
-            csv_data = TimetableExporter.export_to_csv(st.session_state.timetable_df)
+            csv_data = TimetableExporter.export_to_csv(st.session_state.timetable_df, config=st.session_state.schedule_config)
             st.download_button(
                 label="📥 Download CSV",
                 data=csv_data,
@@ -931,7 +933,7 @@ with tab5:
                 mime="text/csv",
                 use_container_width=True
             )
-            matrix_csv_data = TimetableExporter.export_timetable_matrix_csv(st.session_state.timetable_df)
+            matrix_csv_data = TimetableExporter.export_timetable_matrix_csv(st.session_state.timetable_df, config=st.session_state.schedule_config)
             st.download_button(
                 label="📥 Download Matrix CSV",
                 data=matrix_csv_data,
@@ -944,7 +946,8 @@ with tab5:
             st.subheader("Export as Word")
             word_data = TimetableExporter.export_to_word(
                 st.session_state.timetable_df,
-                title="College Timetable - Complete Schedule"
+                title="College Timetable - Complete Schedule",
+                config=st.session_state.schedule_config
             )
             st.download_button(
                 label="📥 Download Word",
@@ -955,7 +958,8 @@ with tab5:
             )
             matrix_word_data = TimetableExporter.export_timetable_matrix_word(
                 st.session_state.timetable_df,
-                title="College Timetable - Timetable Matrix"
+                title="College Timetable - Timetable Matrix",
+                config=st.session_state.schedule_config
             )
             st.download_button(
                 label="📥 Download Matrix Word",
@@ -967,7 +971,7 @@ with tab5:
         
         with col3:
             st.subheader("Export Day-wise Word")
-            word_daywise = TimetableExporter.export_day_wise(st.session_state.timetable_df)
+            word_daywise = TimetableExporter.export_day_wise(st.session_state.timetable_df, config=st.session_state.schedule_config)
             st.download_button(
                 label="📥 Download Day-wise",
                 data=word_daywise,

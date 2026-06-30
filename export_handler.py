@@ -289,8 +289,9 @@ class TimetableExporter:
             csv_buffer.write((f'"{line.replace("\"", "\"\"")}"\n').encode('utf-8'))
 
     @staticmethod
-    def export_to_csv(timetable_df: pd.DataFrame) -> bytes:
+    def export_to_csv(timetable_df: pd.DataFrame, config: Optional[dict] = None) -> bytes:
         """Export timetable to CSV format"""
+        timetable_df = TimetableExporter._filter_timetable_for_config(timetable_df, config)
         csv_buffer = BytesIO()
         header_lines = TimetableExporter._get_export_header_lines(timetable_df)
         TimetableExporter._write_header_csv(csv_buffer, header_lines)
@@ -304,8 +305,9 @@ class TimetableExporter:
         return csv_buffer.getvalue()
     
     @staticmethod
-    def export_to_word(timetable_df: pd.DataFrame, title: str = "College Timetable") -> bytes:
+    def export_to_word(timetable_df: pd.DataFrame, title: str = "College Timetable", config: Optional[dict] = None) -> bytes:
         """Export timetable to Word format"""
+        timetable_df = TimetableExporter._filter_timetable_for_config(timetable_df, config)
         doc = Document()
         TimetableExporter._add_word_header(doc, timetable_df, "Time Table")
 
@@ -474,8 +476,9 @@ class TimetableExporter:
 
     @staticmethod
     def export_day_wise(timetable_df: pd.DataFrame, 
-                       title: str = "College Timetable - Day Wise") -> bytes:
+                       title: str = "College Timetable - Day Wise", config: Optional[dict] = None) -> bytes:
         """Export timetable organized by days in Word format"""
+        timetable_df = TimetableExporter._filter_timetable_for_config(timetable_df, config)
         doc = Document()
         
         # Add title
@@ -551,9 +554,49 @@ class TimetableExporter:
         return ''
 
     @staticmethod
-    def export_timetable_matrix_word(timetable_df: pd.DataFrame, title: str = "College Timetable") -> bytes:
+    def _filter_timetable_for_config(timetable_df: pd.DataFrame, config: Optional[dict] = None) -> pd.DataFrame:
+        """Keep only timetable rows that fall within the configured timings and not inside recess."""
+        if timetable_df is None:
+            return pd.DataFrame()
+        if timetable_df.empty:
+            return timetable_df.copy()
+        if not config:
+            return timetable_df.copy()
+
+        def _coerce_time(value):
+            if value is None:
+                return datetime.strptime('08:30', '%H:%M')
+            if hasattr(value, 'hour') and hasattr(value, 'minute'):
+                return datetime.strptime(f"{value.hour:02d}:{value.minute:02d}", '%H:%M')
+            return datetime.strptime(str(value), '%H:%M')
+
+        morning_start = _coerce_time(config.get('morning_start', '08:30'))
+        morning_end = _coerce_time(config.get('morning_end', '17:00'))
+        short_recess_start = _coerce_time(config.get('short_recess_start', '10:30'))
+        short_recess_end = _coerce_time(config.get('short_recess_end', '10:45'))
+        long_recess_start = _coerce_time(config.get('long_recess_start', '13:00'))
+        long_recess_end = _coerce_time(config.get('long_recess_end', '14:00'))
+
+        def _within_config(row):
+            parsed = TimetableExporter._parse_time_range(str(row.get('Time', '')).strip())
+            if parsed is None:
+                return False
+            start, end = parsed
+            if start < morning_start or end > morning_end:
+                return False
+            if start < short_recess_end and end > short_recess_start:
+                return False
+            if start < long_recess_end and end > long_recess_start:
+                return False
+            return True
+
+        return timetable_df[timetable_df.apply(_within_config, axis=1)].copy()
+
+    @staticmethod
+    def export_timetable_matrix_word(timetable_df: pd.DataFrame, title: str = "College Timetable", config: Optional[dict] = None) -> bytes:
         """Export timetable as a matrix-style Word document - Time Slots x Days"""
         doc = Document()
+        timetable_df = TimetableExporter._filter_timetable_for_config(timetable_df, config)
         TimetableExporter._add_word_header(doc, timetable_df, "Time Table")
 
         semesters = sorted(timetable_df['Semester'].dropna().unique())
@@ -643,9 +686,12 @@ class TimetableExporter:
                         course_labels = []
                         for _, course_row in courses_this_slot.iterrows():
                             label = str(course_row['Course Code'])
+                            course_name = str(course_row.get('Course Name', '')).strip()
                             batch = str(course_row.get('Batch', 'All')).strip()
                             if batch and batch != 'All':
                                 label += f" ({batch})"
+                            if course_name:
+                                label += f"\n{course_name}"
                             course_labels.append(label)
                         
                         cell_text = "\n".join(course_labels)
@@ -677,8 +723,9 @@ class TimetableExporter:
         return word_buffer.getvalue()
 
     @staticmethod
-    def export_timetable_matrix_csv(timetable_df: pd.DataFrame) -> bytes:
+    def export_timetable_matrix_csv(timetable_df: pd.DataFrame, config: Optional[dict] = None) -> bytes:
         """Export timetable as a matrix-style CSV."""
+        timetable_df = TimetableExporter._filter_timetable_for_config(timetable_df, config)
         # Extract unique periods/time slots from timetable data
         if 'Period' in timetable_df.columns and timetable_df['Period'].notna().any():
             # Use Period column if available and populated
@@ -710,7 +757,7 @@ class TimetableExporter:
                     for _, item in period_match.iterrows():
                         label = f"{item['Course Code']}"
                         if pd.notna(item['Batch']) and str(item['Batch']) != 'All':
-                            label += f" (B{item['Batch']})"
+                            label += f" ({item['Batch']})"
                         if pd.notna(item['Branch']) and str(item['Branch']).strip():
                             label += f" {str(item['Branch']).strip()}"
                         label += f" - {item['Course Name']}"
