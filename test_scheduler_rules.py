@@ -113,3 +113,23 @@ def test_export_to_csv_filters_out_of_config_slots():
     csv_text = csv_bytes.decode('utf-8')
     assert 'Engineering Mathematics' in csv_text
     assert 'Outside Config Session' not in csv_text
+
+
+def test_labs_use_rotating_semester_specific_slots_when_primary_is_occupied():
+    generator = schedule_module.ScheduleGenerator(
+        morning_start='08:30',
+        morning_end='17:00',
+        short_recess_start='10:30',
+        short_recess_end='10:45',
+        long_recess_start='13:00',
+        long_recess_end='14:00',
+    )
+
+    first_lab = schedule_module.Lecture('LAB1', 'Lab One', 'Prof A', 'Lab', '1st', 'A', duration=2.0)
+    second_lab = schedule_module.Lecture('LAB2', 'Lab Two', 'Prof A', 'Lab', '1st', 'B', duration=2.0)
+
+    assert generator.assign_lecture(first_lab, 'Monday', '13:45', '15:45', allow_parallel_labs=True)
+    available_slots = generator.get_available_slots('Monday', 2.0, session_type='Lab', lecture=second_lab)
+
+    assert available_slots
+    assert ('13:45', '15:45') not in available_slots

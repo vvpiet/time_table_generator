@@ -116,15 +116,22 @@ class ScheduleGenerator:
         """Return exact start times for 1-hour theory slots."""
         return ['10:00', '11:00', '12:00', '13:45', '15:45']
 
-    def _get_fixed_lab_start_times(self, lecture: Lecture = None) -> List[str]:
-        """Return a fixed lab start time for the semester to keep lab slots consistent."""
-        candidates = ['13:45', '14:45']
+    def _get_fixed_lab_start_times(self, lecture: Lecture = None, day: str = None) -> List[str]:
+        """Return an ordered pool of exact lab start times for the semester and day."""
+        candidates = ['09:00', '11:00', '13:45', '15:45']
         if lecture and getattr(lecture, 'sem', None):
             digits = ''.join([c for c in str(lecture.sem) if c.isdigit()])
             if digits:
-                index = (int(digits) - 1) % len(candidates)
-                return [candidates[index]]
-        return [candidates[0]]
+                sem_index = (int(digits) - 1) % len(candidates)
+                day_offset = self.days.index(day) if day in self.days else 0
+                rotation_offset = (sem_index + day_offset) % len(candidates)
+                ordered = []
+                for offset in range(len(candidates)):
+                    candidate = candidates[(rotation_offset + offset) % len(candidates)]
+                    if candidate not in ordered:
+                        ordered.append(candidate)
+                return ordered
+        return candidates
 
     def get_available_slots(self, day: str, duration: float, session_type: str = 'Theory', lecture: Lecture = None, **kwargs) -> List[Tuple[str, str]]:
         """Get all available time slots for a given duration on a specific day"""
@@ -133,33 +140,9 @@ class ScheduleGenerator:
 
         if session_type == 'Lab':
             lab_slots = []
-            # If using reference periods, try to find consecutive period slots
-            if self.use_reference_periods and self.period_slots:
-                # look for contiguous period ranges that sum to the required duration
-                for i in range(len(self.period_slots)):
-                    total = 0.0
-                    start = self.period_slots[i]['start']
-                    end = None
-                    for j in range(i, len(self.period_slots)):
-                        slot = self.period_slots[j]
-                        slot_duration = (slot['end'] - slot['start']).total_seconds() / 3600
-                        total += slot_duration
-                        end = slot['end']
-                        if abs(total - duration) < 0.01:
-                            # ensure combined slot is within bounds and not in recess
-                            if end > self.morning_end:
-                                break
-                            if self._is_in_recess(start, end):
-                                break
-                            if not self._has_overlap(day, start, end, lecture=lecture, allow_parallel_labs=True):
-                                lab_slots.append((start.strftime('%H:%M'), end.strftime('%H:%M')))
-                            break
-                        if total > duration:
-                            break
-                return lab_slots
-
-            # Flexible / exact start time mode: only consider fixed lab start times
-            for start_str in self._get_fixed_lab_start_times(lecture):
+            # Labs always use exact fixed start times so the schedule stays consistent
+            # and rotates by semester/day for better fitment and instructor spacing.
+            for start_str in self._get_fixed_lab_start_times(lecture, day=day):
                 start_time = datetime.strptime(start_str, '%H:%M')
                 slot_end = start_time + timedelta(hours=duration)
                 if slot_end > self.morning_end:
@@ -181,10 +164,10 @@ class ScheduleGenerator:
             return available_slots
 
         # In flexible mode, only consider exact configured start times, not intermediate offsets.
-        if duration == 1.0:
-            start_times = self._get_fixed_theory_start_times()
+        if session_type == 'Lab':
+            start_times = self._get_fixed_lab_start_times(lecture, day=day)
         else:
-            start_times = self._get_fixed_lab_start_times(lecture)
+            start_times = self._get_fixed_theory_start_times()
 
         for start_str in start_times:
             current_time = datetime.strptime(start_str, '%H:%M')
