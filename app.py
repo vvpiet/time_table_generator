@@ -6,11 +6,14 @@ A Streamlit application for generating non-overlapping timetables with conflict 
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import pathlib
 import json
 import math
 import plotly.express as px
 from schedule_generator import ScheduleGenerator, Lecture, normalize_session_type
 from export_handler import TimetableExporter
+
+ROOT = pathlib.Path(__file__).resolve().parent
 
 # Page configuration
 st.set_page_config(
@@ -411,6 +414,79 @@ with tab1:
                         st.dataframe(df.head(5), use_container_width=True)
             except Exception as e:
                 st.error(f"❌ Error reading CSV: {str(e)}")
+        # Quick-load sample file from workspace
+        if st.button("Load sample_courses_up.csv (use workspace file)", key="load_sample_btn"):
+            try:
+                sample_path = ROOT / 'sample_courses_up.csv'
+                if not sample_path.exists():
+                    st.error("sample_courses_up.csv not found in workspace root")
+                else:
+                    df = pd.read_csv(sample_path)
+                    import_count = 0
+                    import_errors = []
+                    required_cols = ['course_code', 'course_name', 'instructor', 'session_type', 'semester', 'section', 'branch']
+                    if not all(col in df.columns for col in required_cols):
+                        st.error(f"❌ sample_courses_up.csv must have columns: {', '.join(required_cols)}")
+                    else:
+                        for idx, row in df.iterrows():
+                            try:
+                                code = str(row['course_code']).strip()
+                                name = str(row['course_name']).strip()
+                                instr = str(row['instructor']).strip()
+                                stype = str(row['session_type']).strip().title()
+                                sem = str(row['semester']).strip()
+                                sec = str(row['section']).strip()
+                                brch = str(row['branch']).strip()
+                                hours_per_week = 0
+                                if 'hours_per_week' in df.columns:
+                                    try:
+                                        hours_per_week = float(row['hours_per_week'])
+                                    except:
+                                        hours_per_week = 0
+                                stype = normalize_session_type(stype)
+                                if stype not in ['Theory', 'Lab']:
+                                    import_errors.append(f"Row {idx+2}: Invalid session type '{stype}'")
+                                    continue
+                                duration = 2.0 if stype == 'Lab' else 1.0
+                                batch = 'All'
+                                if stype == 'Lab':
+                                    if 'batch_size' in df.columns and not pd.isna(row.get('batch_size')):
+                                        try:
+                                            batch_size = int(row['batch_size'])
+                                            st.session_state.batch_sizes[sem] = batch_size
+                                            batch = f"1-{batch_size}"
+                                        except:
+                                            pass
+                                    else:
+                                        batch_size = st.session_state.batch_sizes.get(sem, 3)
+                                        batch = f"1-{batch_size}"
+                                existing = [p for p in st.session_state.pending_courses if p['code'] == code]
+                                if existing:
+                                    import_errors.append(f"Row {idx+2}: Course {code} already exists")
+                                    continue
+                                course_data = {
+                                    'code': code,
+                                    'name': name,
+                                    'instructor': instr,
+                                    'type': stype,
+                                    'semester': sem,
+                                    'section': sec,
+                                    'branch': brch,
+                                    'duration': duration,
+                                    'batch': batch,
+                                    'hours_per_week': hours_per_week
+                                }
+                                st.session_state.pending_courses.append(course_data)
+                                import_count += 1
+                            except Exception as e:
+                                import_errors.append(f"Row {idx+2}: {str(e)}")
+                        if import_count > 0:
+                            st.success(f"✅ Imported {import_count} course(s) from sample_courses_up.csv")
+                        if import_errors:
+                            st.warning(f"⚠️ {len(import_errors)} row(s) skipped:\n" + "\n".join(import_errors[:5]))
+                        st.rerun()
+            except Exception as e:
+                st.error(f"Error loading sample file: {str(e)}")
         
         st.markdown("---")
         
@@ -549,7 +625,7 @@ with tab1:
             st.markdown("---")
             
             # Generate Schedule button
-            if st.button("🚀 GENERATE SCHEDULE", use_container_width=True, key="generate_btn"):
+                        if st.button("🚀 GENERATE SCHEDULE", use_container_width=True, key="generate_btn"):
                 with st.spinner("⏳ Generating timetable..."):
                     try:
                         reset_schedule_state()
