@@ -625,7 +625,7 @@ with tab1:
             st.markdown("---")
             
             # Generate Schedule button
-                        if st.button("🚀 GENERATE SCHEDULE", use_container_width=True, key="generate_btn"):
+            if st.button("🚀 GENERATE SCHEDULE", use_container_width=True, key="generate_btn"):
                 with st.spinner("⏳ Generating timetable..."):
                     try:
                         reset_schedule_state()
