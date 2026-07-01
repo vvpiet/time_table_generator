@@ -1,0 +1,22 @@
+course_code,course_name,instructor,session_type,semester,section,branch,batch_size,hours_per_week
+CS105,DC,Prof.S.U Commis,Theory,6th,B,Electronics and Telecommunication,,5
+CS106,MPMC,Prof.G Bhavani,Theory,6th,B,Electronics and Telecommunication,,5
+CS107,AWP,Prof.S.V Manjare,Theory,6th,B,Electronics and Telecommunication,,5
+CS108,IOT,Prof.S.M.Kamble,Theory,6th,B,Electronics and Telecommunication,,4
+CS109,Proctor,Prof. Y,Theory,6th,B,Electronics and Telecommunication,,1
+CS110,ESD,Prof.S.A Nadaf,Theory,6th,B,Electronics and Telecommunication,,3
+CS111,DC,Prof.S.U Commis,LAB,6th,B,Electronics and Telecommunication,4,4
+CS112,MPMC,Prof.S.M.Kamble,LAB,6th,B,Electronics and Telecommunication,4,4
+CS113,Mini Project,Prof.G Bhavani,Project,6th,B,Electronics and Telecommunication,4,4
+BS101,MP,Prof.S.V Manjare,Theory,4th,A,Electronics and Telecommunication,,5
+BS102,Marathi,Prof.Dange,Theory,4th,A,Electronics and Telecommunication,,3
+BS103,IPR,Prof.S.M.Kamble,Theory,4th,A,Electronics and Telecommunication,,3
+BS104,OEB,Prof.S.U Commis,Theory,4th,A,Electronics and Telecommunication,,3
+BS105,NT,Prof.G Bhavani,Theory,4th,A,Electronics and Telecommunication,,5
+BS106,SS,Prof.A.U Wagdarikar,Theory,4th,A,Electronics and Telecommunication,,5
+BS107,MDM,Prof.X,Theory,4th,A,Electronics and Telecommunication,,3
+BS108,PCB DESIGN,Prof.S.A Nadaf,Theory,4th,A,Electronics and Telecommunication,,3
+BS109,MP,Prof.S.V Manjare,Lab,4th,A,Electronics and Telecommunication,4,4
+BS110,NT,Prof.G Bhavani,Lab,4th,A,Electronics and Telecommunication,4,4
+BS112,SS,Prof.A.U Wagdarikar,Lab,4th,A,Electronics and Telecommunication,4,4
+BS113,MDM,Prof.X,Lab,4th,A,Electronics and Telecommunication,4,4
